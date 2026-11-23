@@ -15,6 +15,7 @@ describe("InventoryManager", function () {
 
   const PHARMACY = role("PHARMACY_ROLE");
   const REGULATOR = role("REGULATOR_ROLE");
+  const MANUFACTURER = role("MANUFACTURER_ROLE");
 
   async function deployFixture() {
     // Reserve account 0 for the existing setup tests.
@@ -42,6 +43,7 @@ describe("InventoryManager", function () {
     await registry.setRole(PHARMACY, pharm.address);
     await registry.setRole(PHARMACY, pharm2.address);
     await registry.setRole(REGULATOR, reg.address);
+    await registry.setRole(MANUFACTURER, mfg.address);
 
     // Initial stock: 1000 units to manufacturer.
     await inv.connect(scAccount).updateStock(
@@ -270,6 +272,20 @@ describe("InventoryManager", function () {
 
       expect(await inv.isRecalled(1)).to.equal(true);
       expect(await registry.lastStatus(1)).to.equal(1n);
+    });
+
+    it("rejects a recall from the batch's manufacturer once it is no longer a manufacturer", async function () {
+      const { inv, registry, mfg } =
+        await loadFixture(deployFixture);
+
+      // The mock has no revoke, so a fresh account stands in: it is the
+      // batch's recorded manufacturer but holds no MANUFACTURER role.
+      const [, , , , , , , ex] = await ethers.getSigners();
+      await registry.setBatch(7, ex.address, (await time.latest()) + 86400);
+
+      await expect(inv.connect(ex).flagRecall(7, "x"))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToRecall")
+        .withArgs(ex.address);
     });
 
     it("rejects unauthorized recall attempts", async function () {
