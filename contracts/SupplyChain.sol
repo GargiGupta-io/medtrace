@@ -66,6 +66,11 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
     function acceptConsignment(uint256 batchId) external nonReentrant {
         PendingTransfer memory p = pending[batchId][msg.sender];
         if (p.from == address(0)) revert NoPendingTransfer(batchId, msg.sender);
+        // The recipient may have been revoked, or moved to a role that can't
+        // hold stock, after the sender dispatched. Re-check before handing over.
+        if (!registry.isRegistered(msg.sender)) revert NotRegistered(msg.sender);
+        bytes32 toRole = _roleOf(msg.sender);
+        if (toRole != Roles.DISTRIBUTOR && toRole != Roles.PHARMACY) revert InvalidRoute(_roleOf(p.from), toRole);
         // A batch can be recalled or expire while it is on the road.
         if (inventory.isRecalled(batchId)) revert BatchIsRecalled(batchId);
         if (!inventory.checkExpiry(batchId)) revert BatchIsExpired(batchId);
