@@ -68,7 +68,7 @@ function deployments() {
 }
 
 const commit = process.env.GITHUB_SHA || git("rev-parse HEAD");
-const repo = process.env.GITHUB_REPOSITORY || "GargiGupta-io/bdims";
+const repo = process.env.GITHUB_REPOSITORY || "GargiGupta-io/medtrace";
 const report = {
   generatedAt: new Date().toISOString(),
   commit,
