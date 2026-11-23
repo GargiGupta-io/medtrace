@@ -11,7 +11,7 @@ export function verifyUrl(batchId) {
 }
 
 // Accepts what a scanned code may hold: one of our Verify links, or a bare
-// batch number. Anything else is not a BDIMS code.
+// batch number. Anything else is not a MedTrace code.
 export function batchIdFromQr(text) {
   const s = text.trim();
   const link = s.match(/#\/verify\/(\d+)\s*$/);
@@ -28,7 +28,7 @@ export function BatchQr({ batchId, drugName, size = 200 }) {
   return (
     <div className="flex flex-col items-center gap-2">
       <img src={src} width={size} height={size} alt={`QR code for batch #${batchId}`} className="rounded border border-slate-200" />
-      <a className="text-xs text-teal-700 underline" href={src} download={`bdims-batch-${batchId}${drugName ? `-${drugName.replace(/\W+/g, "-")}` : ""}.png`}>
+      <a className="text-xs text-teal-700 underline" href={src} download={`medtrace-batch-${batchId}${drugName ? `-${drugName.replace(/\W+/g, "-")}` : ""}.png`}>
         Download for printing
       </a>
     </div>
@@ -67,7 +67,7 @@ export function QrScanner({ onResult, onClose }) {
         if (code) {
           const id = batchIdFromQr(code.data);
           if (id) return onResult(id);
-          setError("That QR code isn't a BDIMS batch code.");
+          setError("That QR code isn't a MedTrace batch code.");
         }
       }
       frame = requestAnimationFrame(tick);

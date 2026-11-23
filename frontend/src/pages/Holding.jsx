@@ -32,7 +32,7 @@ export function WrongNetwork({ wallet }) {
           <p className="text-slate-600">The contracts aren't deployed on any network yet. Deploy them first (npm run deploy:local).</p>
         ) : (
           <>
-            <p className="text-slate-600">The BDIMS contracts are deployed on:</p>
+            <p className="text-slate-600">The MedTrace contracts are deployed on:</p>
             <div className="mt-4 flex flex-wrap gap-2">
               {available.map((id) => (
                 <Button key={id} onClick={() => wallet.switchChain(id)} disabled={wallet.mode !== "metamask"}>
