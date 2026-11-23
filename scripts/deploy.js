@@ -1,4 +1,4 @@
-// Deploys the three BDIMS contracts and wires them together.
+// Deploys the three MedTrace contracts and wires them together.
 //
 //   Local:    npx hardhat node          (terminal 1, leave running)
 //             npm run deploy:local      (terminal 2)
