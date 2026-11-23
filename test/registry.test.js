@@ -321,4 +321,123 @@ describe("DrugRegistry", function () {
         .withArgs(42);
     });
   });
+  describe("v2: role lockdown", function () {
+    it("refuses to grant a participant role directly", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await expect(registry.grantRole(PHARMACY, stranger.address))
+        .to.be.revertedWithCustomError(registry, "RoleManagedByRegistry")
+        .withArgs(PHARMACY);
+    });
+
+    it("refuses to revoke a participant role directly", async function () {
+      const { registry, mfg } = await loadFixture(deployFixture);
+      await expect(registry.revokeRole(MANUFACTURER, mfg.address))
+        .to.be.revertedWithCustomError(registry, "RoleManagedByRegistry")
+        .withArgs(MANUFACTURER);
+      expect(await registry.isRegistered(mfg.address)).to.equal(true);
+    });
+
+    it("stops a participant renouncing their own role", async function () {
+      const { registry, mfg } = await loadFixture(deployFixture);
+      await expect(registry.connect(mfg).renounceRole(MANUFACTURER, mfg.address))
+        .to.be.revertedWithCustomError(registry, "RoleManagedByRegistry");
+    });
+
+    it("still lets the admin add and remove other admins", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await registry.grantRole(ADMIN, stranger.address);
+      expect(await registry.adminCount()).to.equal(2n);
+      await registry.revokeRole(ADMIN, stranger.address);
+      expect(await registry.adminCount()).to.equal(1n);
+      expect(await registry.hasRole(ADMIN, stranger.address)).to.equal(false);
+    });
+
+    it("never lets the last admin renounce", async function () {
+      const { registry, admin } = await loadFixture(deployFixture);
+      await expect(registry.renounceRole(ADMIN, admin.address)).to.be.revertedWithCustomError(registry, "LastAdmin");
+      expect(await registry.hasRole(ADMIN, admin.address)).to.equal(true);
+    });
+
+    it("lets an admin leave once another admin exists", async function () {
+      const { registry, admin, stranger } = await loadFixture(deployFixture);
+      await registry.grantRole(ADMIN, stranger.address);
+      await registry.renounceRole(ADMIN, admin.address);
+      expect(await registry.adminCount()).to.equal(1n);
+      await expect(registry.connect(stranger).revokeRole(ADMIN, stranger.address)).to.be.revertedWithCustomError(
+        registry,
+        "LastAdmin"
+      );
+    });
+
+    it("doesn't double-count an admin granted twice", async function () {
+      const { registry, admin } = await loadFixture(deployFixture);
+      await registry.grantRole(ADMIN, admin.address);
+      expect(await registry.adminCount()).to.equal(1n);
+    });
+  });
+
+  describe("v2: input limits", function () {
+    const long = (n) => "x".repeat(n);
+
+    it("rejects a participant name or licence over 64 bytes", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await expect(registry.registerParticipant(stranger.address, long(65), "L-1", PHARMACY)).to.be.revertedWithCustomError(
+        registry,
+        "FieldTooLong"
+      );
+      await expect(registry.registerParticipant(stranger.address, "Apollo", long(65), PHARMACY)).to.be.revertedWithCustomError(
+        registry,
+        "FieldTooLong"
+      );
+    });
+
+    it("accepts names exactly at the 64-byte limit", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await registry.registerParticipant(stranger.address, long(64), long(64), PHARMACY);
+      expect(await registry.isRegistered(stranger.address)).to.equal(true);
+    });
+
+    it("rejects an over-long drug name, composition or CID", async function () {
+      const { registry, mfg, now } = await loadFixture(deployFixture);
+      const ok = [now - DAY, now + 30 * DAY, 1];
+      await expect(registry.connect(mfg).registerBatch(long(65), "", ...ok, CID)).to.be.revertedWithCustomError(registry, "FieldTooLong");
+      await expect(registry.connect(mfg).registerBatch("X", long(257), ...ok, CID)).to.be.revertedWithCustomError(registry, "FieldTooLong");
+      await expect(registry.connect(mfg).registerBatch("X", "", ...ok, "b" + long(100))).to.be.revertedWithCustomError(
+        registry,
+        "FieldTooLong"
+      );
+    });
+
+    it("rejects a certificate reference that isn't shaped like a CID", async function () {
+      const { registry, mfg, now } = await loadFixture(deployFixture);
+      for (const bad of ["https://example.com/cert.pdf", "Q", "QX123", "cert.pdf"]) {
+        await expect(registry.connect(mfg).registerBatch("X", "", now - DAY, now + 30 * DAY, 1, bad)).to.be.revertedWithCustomError(
+          registry,
+          "InvalidCid"
+        );
+      }
+    });
+
+    it("accepts both CIDv0 (Qm...) and CIDv1 (b...) shapes", async function () {
+      const { registry, mfg, now } = await loadFixture(deployFixture);
+      await registry.connect(mfg).registerBatch("A", "", now - DAY, now + 30 * DAY, 1, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+      await registry.connect(mfg).registerBatch("B", "", now - DAY, now + 30 * DAY, 1, CID);
+      expect(await registry.batchCount()).to.equal(2n);
+    });
+
+    it("rejects a zero manufacture date", async function () {
+      const { registry, mfg, now } = await loadFixture(deployFixture);
+      await expect(registry.connect(mfg).registerBatch("X", "", 0, now + 30 * DAY, 1, CID)).to.be.revertedWithCustomError(
+        registry,
+        "InvalidDates"
+      );
+    });
+
+    it("rejects a manufacture date in the future", async function () {
+      const { registry, mfg, now } = await loadFixture(deployFixture);
+      await expect(registry.connect(mfg).registerBatch("X", "", now + 10 * DAY, now + 30 * DAY, 1, CID))
+        .to.be.revertedWithCustomError(registry, "InvalidDates")
+        .withArgs(now + 10 * DAY, now + 30 * DAY);
+    });
+  });
 });
