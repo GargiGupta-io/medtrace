@@ -1,4 +1,4 @@
-# BDIMS: Blockchain-Based Drug Inventory Management System
+# MedTrace: Blockchain-Based Drug Supply-Chain Tracking
 
 Blockchain Technology (DSE 4408), Manipal Institute of Technology.
 
@@ -14,8 +14,8 @@ You need Node 22, Git, VS Code (with the Solidity extension by Nomic
 Foundation; VS Code will suggest it when you open the folder) and MetaMask.
 
 ```bash
-git clone https://github.com/GargiGupta-io/bdims.git
-cd bdims
+git clone https://github.com/GargiGupta-io/medtrace.git
+cd medtrace
 nvm use          # switches to Node 22
 npm install
 npm test
