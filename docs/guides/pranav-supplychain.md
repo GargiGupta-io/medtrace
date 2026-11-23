@@ -40,8 +40,8 @@ takes a `location`. And there are two new functions, `rejectConsignment` and
 
 2. **Clone and install:**
    ```bash
-   git clone https://github.com/GargiGupta-io/bdims.git
-   cd bdims
+   git clone https://github.com/GargiGupta-io/medtrace.git
+   cd medtrace
    nvm use
    npm install
    npm test
