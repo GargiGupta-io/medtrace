@@ -64,6 +64,16 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "FieldTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidCid",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint64",
@@ -91,6 +101,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "LastAdmin",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -99,6 +114,17 @@
       }
     ],
     "name": "NotRegistered",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      }
+    ],
+    "name": "RoleManagedByRegistry",
     "type": "error"
   },
   {
