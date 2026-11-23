@@ -66,6 +66,16 @@ interface IDrugRegistry is IAccessControl {
     error CallerNotInventory(address caller);
     error AddressAlreadySet();
     error ZeroAddress();
+    /// @dev Participant roles change only through registerParticipant,
+    ///      assignRole and revokeParticipant, so the role and the
+    ///      participant record can never disagree.
+    error RoleManagedByRegistry(bytes32 role);
+    /// @dev The last admin cannot be removed, or nobody could ever manage the network again.
+    error LastAdmin();
+    /// @dev A text field is longer than its limit (see the constants in DrugRegistry).
+    error FieldTooLong();
+    /// @dev The certificate reference doesn't look like an IPFS CID (Qm... or b...).
+    error InvalidCid();
 
     // ------------------------------------------------------ participant admin
 
@@ -73,7 +83,8 @@ interface IDrugRegistry is IAccessControl {
     /// @dev `role` must be MANUFACTURER, DISTRIBUTOR, PHARMACY or REGULATOR.
     ///      Must grant `role` through AccessControl so hasRole() works for
     ///      the other two contracts.
-    ///      Reverts: ZeroAddress, AlreadyRegistered, InvalidRole, EmptyField.
+    ///      Reverts: ZeroAddress, AlreadyRegistered, InvalidRole, EmptyField,
+    ///      FieldTooLong (name or licenceId over 64 bytes).
     function registerParticipant(address account, string calldata name, string calldata licenceId, bytes32 role)
         external;
 
@@ -95,7 +106,10 @@ interface IDrugRegistry is IAccessControl {
     ///      supplyChain.initialiseCustody(batchId, msg.sender, quantity)
     ///      so the manufacturer holds the full quantity immediately.
     ///      Reverts: ZeroQuantity, EmptyField (drugName or ipfsHash empty),
-    ///      InvalidDates (expiryDate must be after mfgDate AND after now).
+    ///      FieldTooLong (drugName over 64, composition over 256, ipfsHash over 100 bytes),
+    ///      InvalidCid (ipfsHash must start with "Qm" or "b"),
+    ///      InvalidDates (mfgDate must be set and not in the future; expiryDate
+    ///      must be after mfgDate AND after now).
     /// @return batchId The new batch identifier.
     function registerBatch(
         string calldata drugName,
