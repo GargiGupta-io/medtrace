@@ -1,8 +1,8 @@
 {
-  "name": "bdims",
+  "name": "medtrace",
   "version": "0.1.0",
   "private": true,
-  "description": "Blockchain-Based Drug Inventory Management System. Blockchain Technology DSE 4408, Manipal Institute of Technology.",
+  "description": "MedTrace: blockchain-based drug supply-chain tracking. Blockchain Technology DSE 4408, Manipal Institute of Technology.",
   "license": "MIT",
   "engines": {
     "node": ">=22"
