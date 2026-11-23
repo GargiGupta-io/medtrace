@@ -142,10 +142,11 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
     ) external override nonReentrant {
         IDrugRegistry.Batch memory batch = registry.getBatchDetails(batchId);
 
-        if (
-            msg.sender != batch.manufacturer &&
-            !registry.hasRole(Roles.REGULATOR, msg.sender)
-        ) {
+        // The original manufacturer may recall only while it is still an active
+        // manufacturer; once revoked, recalls go through a regulator.
+        bool isOwnManufacturer = msg.sender == batch.manufacturer &&
+            registry.hasRole(Roles.MANUFACTURER, msg.sender);
+        if (!isOwnManufacturer && !registry.hasRole(Roles.REGULATOR, msg.sender)) {
             revert NotAuthorisedToRecall(msg.sender);
         }
 
