@@ -68,7 +68,8 @@ interface IInventoryManager {
     function dispenseDrug(uint256 batchId, uint256 quantity) external;
 
     /// @notice Freeze a batch across the whole network.
-    /// @dev Caller must be the batch's original manufacturer OR hold REGULATOR.
+    /// @dev Caller must be the batch's original manufacturer AND still hold
+    ///      MANUFACTURER (a revoked manufacturer can't recall), OR hold REGULATOR.
     ///      Sets the recall flag, calls registry.setBatchStatus(batchId, Recalled),
     ///      emits BatchRecalled.
     ///      Reverts: NotAuthorisedToRecall, AlreadyRecalled.
