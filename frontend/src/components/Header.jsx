@@ -17,8 +17,8 @@ export default function Header({ wallet, profile, page }) {
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-700 text-sm font-bold text-white">Rx</div>
           <div>
-            <p className="text-sm font-semibold leading-tight">BDIMS</p>
-            <p className="text-xs leading-tight text-slate-500">Drug Inventory Ledger</p>
+            <p className="text-sm font-semibold leading-tight">MedTrace</p>
+            <p className="text-xs leading-tight text-slate-500">Drug Supply-Chain Ledger</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
