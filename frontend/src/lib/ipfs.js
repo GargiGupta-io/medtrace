@@ -5,7 +5,9 @@
 // in their own browser (localStorage) until they choose to forget it.
 
 const UPLOAD_URL = import.meta.env.VITE_PINATA_UPLOAD_URL || "https://uploads.pinata.cloud/v3/files";
-const KEY_NAME = "bdims.pinataJwt";
+const KEY_NAME = "medtrace.pinataJwt";
+// Name used before the project was renamed from BDIMS; read once and moved over.
+const OLD_KEY_NAME = "bdims.pinataJwt";
 
 // Where certificate links open. ipfs.io and dweb.link are moving to a
 // service-worker-only gateway and refuse plain requests (HTTP 429), so we
@@ -16,6 +18,9 @@ export const CERTIFICATE_TYPES = "application/pdf,image/png,image/jpeg";
 
 export function savedKey() {
   try {
+    const old = localStorage.getItem(OLD_KEY_NAME);
+    if (old && !localStorage.getItem(KEY_NAME)) localStorage.setItem(KEY_NAME, old);
+    if (old) localStorage.removeItem(OLD_KEY_NAME);
     return localStorage.getItem(KEY_NAME) || "";
   } catch {
     return "";
@@ -33,6 +38,7 @@ export function saveKey(jwt) {
 export function forgetKey() {
   try {
     localStorage.removeItem(KEY_NAME);
+    localStorage.removeItem(OLD_KEY_NAME);
   } catch {
     /* nothing stored */
   }
@@ -46,7 +52,7 @@ export async function uploadCertificate(file, jwt) {
   const body = new FormData();
   body.append("file", file, file.name);
   body.append("network", "public");
-  body.append("name", `bdims-certificate-${file.name}`);
+  body.append("name", `medtrace-certificate-${file.name}`);
 
   let res;
   try {
