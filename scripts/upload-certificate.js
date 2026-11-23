@@ -28,7 +28,7 @@ async function main() {
   // Pinata's v3 API stores files privately unless told otherwise, and a
   // private file can't be opened from a public gateway.
   body.append("network", "public");
-  body.append("name", `bdims-certificate-${path.basename(file)}`);
+  body.append("name", `medtrace-certificate-${path.basename(file)}`);
 
   const res = await fetch(UPLOAD_URL, { method: "POST", headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, body });
   if (res.status === 401 || res.status === 403) throw new Error("Pinata rejected PINATA_JWT. It needs the Files: Write permission.");
