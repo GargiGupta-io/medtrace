@@ -36,8 +36,8 @@ disagree, the interface wins. Tell Gargi.
 
 2. **Clone and install:**
    ```bash
-   git clone https://github.com/GargiGupta-io/bdims.git
-   cd bdims
+   git clone https://github.com/GargiGupta-io/medtrace.git
+   cd medtrace
    nvm use
    npm install
    npm test
