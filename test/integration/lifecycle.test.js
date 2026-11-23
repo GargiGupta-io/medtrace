@@ -109,4 +109,56 @@ describe("Integration: full batch lifecycle", function () {
     await expect(inventory.connect(dist1).dispenseDrug(1, 1)).to.be.revertedWithCustomError(inventory, "NotPharmacy");
     await expect(inventory.connect(stranger).flagRecall(1, "x")).to.be.revertedWithCustomError(inventory, "NotAuthorisedToRecall");
   });
+  describe("v2: revocation while stock is moving", function () {
+    it("a pharmacy revoked after dispatch can't accept; the sender cancels and gets the units back", async function () {
+      const { registry, supply, inventory, mfg, pharm } = await loadFixture(system);
+      await supply.connect(mfg).transferCustody(1, pharm.address, 300, "Pune");
+      await registry.revokeParticipant(pharm.address);
+
+      await expect(supply.connect(pharm).acceptConsignment(1))
+        .to.be.revertedWithCustomError(supply, "NotRegistered")
+        .withArgs(pharm.address);
+
+      await supply.connect(mfg).cancelTransfer(1, pharm.address);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(10000);
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(0);
+    });
+
+    it("a distributor moved to regulator after dispatch can't accept the stock", async function () {
+      const { registry, supply, mfg, dist1 } = await loadFixture(system);
+      await supply.connect(mfg).transferCustody(1, dist1.address, 100, "Mumbai");
+      await registry.assignRole(dist1.address, role("REGULATOR_ROLE"));
+
+      await expect(supply.connect(dist1).acceptConsignment(1))
+        .to.be.revertedWithCustomError(supply, "InvalidRoute")
+        .withArgs(role("MANUFACTURER_ROLE"), role("REGULATOR_ROLE"));
+    });
+
+    it("a distributor moved to pharmacy after dispatch can still accept", async function () {
+      const { registry, supply, inventory, mfg, dist1 } = await loadFixture(system);
+      await supply.connect(mfg).transferCustody(1, dist1.address, 100, "Mumbai");
+      await registry.assignRole(dist1.address, role("PHARMACY_ROLE"));
+      await supply.connect(dist1).acceptConsignment(1);
+      expect(await inventory.getFacilityStock(dist1.address, 1)).to.equal(100);
+    });
+
+    it("a revoked manufacturer can't recall its own batch, but a regulator still can", async function () {
+      const { registry, inventory, mfg, reg } = await loadFixture(system);
+      await registry.revokeParticipant(mfg.address);
+      await expect(inventory.connect(mfg).flagRecall(1, "late notice"))
+        .to.be.revertedWithCustomError(inventory, "NotAuthorisedToRecall")
+        .withArgs(mfg.address);
+      await inventory.connect(reg).flagRecall(1, "regulator action");
+      expect(await inventory.isRecalled(1)).to.equal(true);
+    });
+
+    it("an admin can't bypass the registry by granting a role directly", async function () {
+      const { registry, stranger } = await loadFixture(system);
+      await expect(registry.grantRole(role("PHARMACY_ROLE"), stranger.address)).to.be.revertedWithCustomError(
+        registry,
+        "RoleManagedByRegistry"
+      );
+      expect(await registry.isRegistered(stranger.address)).to.equal(false);
+    });
+  });
 });
