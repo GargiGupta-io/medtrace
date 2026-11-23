@@ -84,7 +84,11 @@ interface ISupplyChain {
     function transferCustody(uint256 batchId, address to, uint256 quantity, string calldata location) external;
 
     /// @notice Recipient confirms physical receipt. msg.sender is the recipient.
-    /// @dev Reverts: NoPendingTransfer, BatchIsRecalled, BatchIsExpired.
+    /// @dev Reverts: NoPendingTransfer, NotRegistered (the recipient was
+    ///      revoked while the stock was in transit), InvalidRoute (the
+    ///      recipient's role changed to one that may not hold stock),
+    ///      BatchIsRecalled, BatchIsExpired. A blocked consignment stays in
+    ///      escrow until the sender cancels it.
     ///      Then: updateStock(batchId, address(this), msg.sender, qty),
     ///      append a TransferRecord, delete the pending entry.
     function acceptConsignment(uint256 batchId) external;
