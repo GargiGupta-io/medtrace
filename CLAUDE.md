@@ -1,4 +1,4 @@
-# BDIMS: instructions for AI assistants
+# MedTrace (formerly BDIMS): instructions for AI assistants
 
 Blockchain-Based Drug Inventory Management System. A university group project
 (Blockchain Technology DSE 4408, Manipal Institute of Technology): three
