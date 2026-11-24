@@ -101,6 +101,22 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "enum IDrugRegistry.BatchStatus",
+        "name": "from",
+        "type": "uint8"
+      },
+      {
+        "internalType": "enum IDrugRegistry.BatchStatus",
+        "name": "to",
+        "type": "uint8"
+      }
+    ],
+    "name": "InvalidStatusTransition",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "LastAdmin",
     "type": "error"
