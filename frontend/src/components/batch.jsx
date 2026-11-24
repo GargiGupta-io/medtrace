@@ -3,7 +3,7 @@ import { useTx } from "../hooks/useTx.js";
 import { ROLES, roleLabel } from "../lib/roles.js";
 import { shortAddr, toDate, units } from "../lib/format.js";
 import { Badge, Button, Card, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
-import { batchStatus } from "../lib/ledger.js";
+import { batchStatus, hasLapsed, lapsesAt } from "../lib/ledger.js";
 
 // Batch pieces shared by the manufacturer, distributor and pharmacy dashboards.
 
@@ -22,7 +22,7 @@ export function InTransit({ items, nameOf, supply, onDone }) {
                   Batch #{t.batchId.toString()} · {units(t.quantity)} units → {nameOf(t.to)}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {t.location} · sent {toDate(t.initiatedAt)}
+                  {t.location} · sent {toDate(t.initiatedAt)} · {hasLapsed(t.initiatedAt) ? "lapsed, cancel to get it back" : `lapses ${toDate(lapsesAt(t.initiatedAt))}`}
                 </p>
               </div>
               <Button size="sm" variant="secondary" disabled={tx.busy} onClick={() => tx.run(`Cancel batch #${t.batchId}`, () => supply.cancelTransfer(t.batchId, t.to))}>
@@ -136,16 +136,25 @@ export function IncomingConsignments({ items, nameOf, supply, onDone }) {
                   Batch #{t.batchId.toString()} · {units(t.quantity)} units from {nameOf(t.from)}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {t.location} · sent {toDate(t.initiatedAt)}
+                  {t.location} · sent {toDate(t.initiatedAt)} ·{" "}
+                  {hasLapsed(t.initiatedAt) ? <span className="text-rose-700">lapsed {toDate(lapsesAt(t.initiatedAt))}, can only go back</span> : `accept by ${toDate(lapsesAt(t.initiatedAt))}`}
                 </p>
               </div>
               <div className="flex gap-1.5">
-                <Button size="sm" variant="secondary" disabled={tx.busy} onClick={() => setRejecting(t)}>
-                  Reject
-                </Button>
-                <Button size="sm" disabled={tx.busy} onClick={() => tx.run(`Accept batch #${t.batchId}`, () => supply.acceptConsignment(t.batchId))}>
-                  Accept
-                </Button>
+                {hasLapsed(t.initiatedAt) ? (
+                  <Button size="sm" variant="secondary" disabled={tx.busy} onClick={() => tx.run(`Send batch #${t.batchId} back`, () => supply.expireTransfer(t.batchId, t.to))}>
+                    Send back
+                  </Button>
+                ) : (
+                  <>
+                    <Button size="sm" variant="secondary" disabled={tx.busy} onClick={() => setRejecting(t)}>
+                      Reject
+                    </Button>
+                    <Button size="sm" disabled={tx.busy} onClick={() => tx.run(`Accept batch #${t.batchId}`, () => supply.acceptConsignment(t.batchId))}>
+                      Accept
+                    </Button>
+                  </>
+                )}
               </div>
             </li>
           ))}
