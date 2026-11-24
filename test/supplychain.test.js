@@ -497,4 +497,43 @@ describe("SupplyChain", function () {
         .withArgs(1, 300, 301);
     });
   });
+
+  describe("v2: emergency pause", function () {
+    it("no new dispatches while paused", async function () {
+      const { sc, registry, mfg, dist } = await loadFixture(deployFixture);
+      await registry.setPaused(true);
+      await expect(sc.connect(mfg).transferCustody(1, dist.address, 10, "Plant"))
+        .to.be.revertedWithCustomError(sc, "Paused");
+    });
+
+    it("a consignment caught in transit can't be accepted, but can be cancelled or rejected", async function () {
+      const { sc, registry, inventory, mfg, dist, dist2 } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      await sc.connect(mfg).transferCustody(1, dist2.address, 100, "Plant");
+      await registry.setPaused(true);
+      await expect(sc.connect(dist).acceptConsignment(1)).to.be.revertedWithCustomError(sc, "Paused");
+      await sc.connect(mfg).cancelTransfer(1, dist.address);
+      await sc.connect(dist2).rejectConsignment(1, "Paused");
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(1000n);
+    });
+
+    it("returns to the manufacturer still work while paused", async function () {
+      const { sc, registry, inventory, mfg, pharm } = await loadFixture(deployFixture);
+      await registry.setBatchManufacturer(1, mfg.address);
+      await sc.connect(mfg).transferCustody(1, pharm.address, 50, "Plant");
+      await sc.connect(pharm).acceptConsignment(1);
+      await inventory.setRecalled(1, true);
+      await registry.setPaused(true);
+      await sc.connect(pharm).returnToManufacturer(1, 50, "Recall return");
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(0n);
+    });
+
+    it("everything resumes once unpaused", async function () {
+      const { sc, registry, mfg, dist } = await loadFixture(deployFixture);
+      await registry.setPaused(true);
+      await registry.setPaused(false);
+      await sc.connect(mfg).transferCustody(1, dist.address, 10, "Plant");
+      await sc.connect(dist).acceptConsignment(1);
+    });
+  });
 });
