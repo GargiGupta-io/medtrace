@@ -5,9 +5,21 @@ pragma solidity ^0.8.24;
 // Each has only the functions SupplyChain calls, plus setters so a test
 // can put the world into whatever state it needs.
 
+import {IDrugRegistry} from "../interfaces/IDrugRegistry.sol";
+
 contract MockRegistryForSupplyChain {
     mapping(bytes32 => mapping(address => bool)) private roles;
     mapping(address => bool) private registered;
+    mapping(uint256 => address) private manufacturerOf;
+
+    function setBatchManufacturer(uint256 batchId, address manufacturer) external {
+        manufacturerOf[batchId] = manufacturer;
+    }
+
+    function getBatchDetails(uint256 batchId) external view returns (IDrugRegistry.Batch memory b) {
+        b.batchId = batchId;
+        b.manufacturer = manufacturerOf[batchId];
+    }
 
     function setParticipant(address account, bytes32 role) external {
         roles[role][account] = true;
@@ -34,10 +46,12 @@ contract MockRegistryForSupplyChain {
 
 contract MockInventoryForSupplyChain {
     mapping(uint256 => bool) public isRecalled;
+    mapping(uint256 => bool) public isQuarantined;
     mapping(uint256 => bool) private expired;
     mapping(address => mapping(uint256 => uint256)) private stock;
 
     function setRecalled(uint256 batchId, bool value) external { isRecalled[batchId] = value; }
+    function setQuarantined(uint256 batchId, bool value) external { isQuarantined[batchId] = value; }
     function setExpired(uint256 batchId, bool value) external { expired[batchId] = value; }
 
     function checkExpiry(uint256 batchId) external view returns (bool) { return !expired[batchId]; }
