@@ -19,6 +19,12 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
     /// @notice How many accounts hold the admin role. Never allowed to reach zero.
     uint256 public adminCount;
 
+    /// @notice True while the emergency stop is on.
+    bool public paused;
+
+    /// @dev Accounts invited to become admin that haven't accepted yet.
+    mapping(address => bool) private adminProposed;
+
     uint256 internal constant MAX_NAME_BYTES = 64;
     uint256 internal constant MAX_COMPOSITION_BYTES = 256;
     uint256 internal constant MAX_CID_BYTES = 100;
@@ -89,6 +95,7 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
         uint256 quantity,
         string calldata ipfsHash
     ) external onlyRole(Roles.MANUFACTURER) nonReentrant returns (uint256 batchId) {
+        if (paused) revert Paused();
         if (quantity == 0) revert ZeroQuantity();
         if (bytes(drugName).length == 0 || bytes(ipfsHash).length == 0) revert EmptyField();
         if (
@@ -129,14 +136,56 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
         emit BatchStatusChanged(batchId, status);
     }
 
+    // ------------------------------------------------------------------ admins
+
+    function proposeAdmin(address account) external onlyRole(Roles.ADMIN) {
+        if (account == address(0)) revert ZeroAddress();
+        if (hasRole(Roles.ADMIN, account)) revert AlreadyRegistered(account);
+        adminProposed[account] = true;
+        emit AdminProposed(account, msg.sender);
+    }
+
+    function cancelAdminProposal(address account) external onlyRole(Roles.ADMIN) {
+        if (!adminProposed[account]) revert NoAdminProposal(account);
+        delete adminProposed[account];
+        emit AdminProposalCancelled(account);
+    }
+
+    function acceptAdmin() external {
+        if (!adminProposed[msg.sender]) revert NoAdminProposal(msg.sender);
+        delete adminProposed[msg.sender];
+        _grantRole(Roles.ADMIN, msg.sender);
+    }
+
+    function isAdminProposed(address account) external view returns (bool) {
+        return adminProposed[account];
+    }
+
+    // ------------------------------------------------------------------- pause
+
+    function pause(string calldata reason) external {
+        if (!hasRole(Roles.ADMIN, msg.sender) && !hasRole(Roles.REGULATOR, msg.sender)) {
+            revert NotAuthorisedToPause(msg.sender);
+        }
+        if (paused) revert Paused();
+        paused = true;
+        emit SystemPaused(msg.sender, reason);
+    }
+
+    function unpause() external {
+        if (!hasRole(Roles.ADMIN, msg.sender)) revert NotAuthorisedToPause(msg.sender);
+        if (!paused) revert NotPaused();
+        paused = false;
+        emit SystemUnpaused(msg.sender);
+    }
+
     // ---------------------------------------------------- role lockdown (v2)
 
-    /// @notice Only the admin role can be granted directly. Participant roles
-    ///         go through registerParticipant / assignRole, so every role
-    ///         holder has a matching participant record.
-    function grantRole(bytes32 role, address account) public override(AccessControl, IAccessControl) {
-        if (role != Roles.ADMIN) revert RoleManagedByRegistry(role);
-        super.grantRole(role, account);
+    /// @notice No role can be granted directly. Participant roles go through
+    ///         registerParticipant / assignRole, and admins through
+    ///         proposeAdmin / acceptAdmin.
+    function grantRole(bytes32 role, address) public pure override(AccessControl, IAccessControl) {
+        revert RoleManagedByRegistry(role);
     }
 
     /// @notice Only the admin role can be revoked directly. Use revokeParticipant for participants.
