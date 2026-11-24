@@ -11,6 +11,7 @@ import RegulatorDashboard from "./pages/RegulatorDashboard.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
 import { NotRegistered, WrongNetwork } from "./pages/Holding.jsx";
 import VerifyPage from "./pages/VerifyPage.jsx";
+import { AcceptAdminInvite, PauseBanner, usePauseState } from "./components/emergency.jsx";
 import DevPage from "./pages/DevPage.jsx";
 
 // "#/verify" or "#/verify/<batch>" opens the public page, "#/dev" the
@@ -33,6 +34,7 @@ export default function App() {
   const wallet = useWallet();
   const profile = useProfile(wallet.contracts, wallet.address);
   const route = useRoute();
+  const pause = usePauseState(wallet);
 
   let body;
   if (route.page === "verify") body = <VerifyPage batchId={route.batchId} />;
@@ -44,13 +46,17 @@ export default function App() {
   else if (profile.active && profile.role === ROLES.MANUFACTURER) body = <ManufacturerDashboard wallet={wallet} profile={profile} />;
   else if (profile.active && profile.role === ROLES.DISTRIBUTOR) body = <DistributorDashboard wallet={wallet} profile={profile} />;
   else if (profile.active && profile.role === ROLES.PHARMACY) body = <PharmacyDashboard wallet={wallet} profile={profile} />;
-  else if (profile.active && profile.role === ROLES.REGULATOR) body = <RegulatorDashboard wallet={wallet} profile={profile} />;
-  else if (profile.isAdmin) body = <AdminDashboard wallet={wallet} />;
+  else if (profile.active && profile.role === ROLES.REGULATOR) body = <RegulatorDashboard wallet={wallet} profile={profile} pause={pause} />;
+  else if (profile.isAdmin) body = <AdminDashboard wallet={wallet} pause={pause} />;
   else body = <NotRegistered address={wallet.address} revokedName={profile.name} />;
 
   return (
     <div className="min-h-screen">
       <Header wallet={wallet} profile={profile} page={route.page} />
+      {route.page === "app" && wallet.deployment && <PauseBanner pause={pause} />}
+      {route.page === "app" && profile.adminInvited && !profile.isAdmin && (
+        <AcceptAdminInvite registry={wallet.contracts.registry} onAccepted={profile.reload} />
+      )}
       <main>{body}</main>
     </div>
   );
