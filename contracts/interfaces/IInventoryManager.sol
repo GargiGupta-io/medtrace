@@ -75,6 +75,9 @@ interface IInventoryManager {
     error NotAuthorisedToQuarantine(address caller);
     /// @dev Stock can be destroyed only once its batch is recalled or expired.
     error StockNotDisposable(uint256 batchId);
+    /// @dev The network is paused (DrugRegistry.paused()). Recall, quarantine
+    ///      and destruction still work; dispensing doesn't.
+    error Paused();
 
     // ---------------------------------------------------------------- actions
 
@@ -90,7 +93,7 @@ interface IInventoryManager {
     function updateStock(uint256 batchId, address from, address to, uint256 quantity) external;
 
     /// @notice Dispense units to a patient. PHARMACY role only.
-    /// @dev Reverts in order: NotPharmacy, ZeroQuantity, BatchIsRecalled,
+    /// @dev Reverts in order: Paused, NotPharmacy, ZeroQuantity, BatchIsRecalled,
     ///      BatchIsQuarantined, BatchIsExpired, InsufficientStock.
     ///      Then debit, append a DispenseRecord, emit DrugDispensed (and
     ///      LowStockAlert / ExpiryWarning where they apply).
