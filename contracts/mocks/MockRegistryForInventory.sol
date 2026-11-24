@@ -18,6 +18,8 @@ contract MockRegistryForInventory {
         batches[batchId].expiryDate = expiryDate;
     }
 
+    function setQuantity(uint256 batchId, uint256 quantity) external { batches[batchId].quantity = quantity; }
+
     function hasRole(bytes32 role, address account) external view returns (bool) { return roles[role][account]; }
 
     function getBatchDetails(uint256 batchId) external view returns (IDrugRegistry.Batch memory) {
