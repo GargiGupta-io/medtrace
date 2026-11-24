@@ -343,9 +343,17 @@ describe("DrugRegistry", function () {
         .to.be.revertedWithCustomError(registry, "RoleManagedByRegistry");
     });
 
-    it("still lets the admin add and remove other admins", async function () {
+    it("refuses to grant the admin role directly too", async function () {
       const { registry, stranger } = await loadFixture(deployFixture);
-      await registry.grantRole(ADMIN, stranger.address);
+      await expect(registry.grantRole(ADMIN, stranger.address))
+        .to.be.revertedWithCustomError(registry, "RoleManagedByRegistry")
+        .withArgs(ADMIN);
+    });
+
+    it("still lets the admin add (by invitation) and remove other admins", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await registry.proposeAdmin(stranger.address);
+      await registry.connect(stranger).acceptAdmin();
       expect(await registry.adminCount()).to.equal(2n);
       await registry.revokeRole(ADMIN, stranger.address);
       expect(await registry.adminCount()).to.equal(1n);
@@ -360,7 +368,8 @@ describe("DrugRegistry", function () {
 
     it("lets an admin leave once another admin exists", async function () {
       const { registry, admin, stranger } = await loadFixture(deployFixture);
-      await registry.grantRole(ADMIN, stranger.address);
+      await registry.proposeAdmin(stranger.address);
+      await registry.connect(stranger).acceptAdmin();
       await registry.renounceRole(ADMIN, admin.address);
       expect(await registry.adminCount()).to.equal(1n);
       await expect(registry.connect(stranger).revokeRole(ADMIN, stranger.address)).to.be.revertedWithCustomError(
@@ -369,9 +378,11 @@ describe("DrugRegistry", function () {
       );
     });
 
-    it("doesn't double-count an admin granted twice", async function () {
+    it("won't invite someone who is already an admin, so the count can't double", async function () {
       const { registry, admin } = await loadFixture(deployFixture);
-      await registry.grantRole(ADMIN, admin.address);
+      await expect(registry.proposeAdmin(admin.address))
+        .to.be.revertedWithCustomError(registry, "AlreadyRegistered")
+        .withArgs(admin.address);
       expect(await registry.adminCount()).to.equal(1n);
     });
   });
@@ -474,6 +485,99 @@ describe("DrugRegistry", function () {
       await expect(registry.connect(inventory).setBatchStatus(1, ACTIVE))
         .to.be.revertedWithCustomError(registry, "InvalidStatusTransition")
         .withArgs(ACTIVE, ACTIVE);
+    });
+  });
+
+  describe("v2: admin invitations", function () {
+    it("nothing is granted until the invited account accepts", async function () {
+      const { registry, admin, stranger } = await loadFixture(deployFixture);
+      await expect(registry.proposeAdmin(stranger.address))
+        .to.emit(registry, "AdminProposed").withArgs(stranger.address, admin.address);
+      expect(await registry.isAdminProposed(stranger.address)).to.equal(true);
+      expect(await registry.hasRole(ADMIN, stranger.address)).to.equal(false);
+
+      await expect(registry.connect(stranger).acceptAdmin())
+        .to.emit(registry, "RoleGranted").withArgs(ADMIN, stranger.address, stranger.address);
+      expect(await registry.hasRole(ADMIN, stranger.address)).to.equal(true);
+      expect(await registry.isAdminProposed(stranger.address)).to.equal(false);
+      expect(await registry.adminCount()).to.equal(2n);
+    });
+
+    it("an account nobody invited can't accept", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await expect(registry.connect(stranger).acceptAdmin())
+        .to.be.revertedWithCustomError(registry, "NoAdminProposal").withArgs(stranger.address);
+    });
+
+    it("an invitation can be withdrawn before it's accepted", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await registry.proposeAdmin(stranger.address);
+      await expect(registry.cancelAdminProposal(stranger.address))
+        .to.emit(registry, "AdminProposalCancelled").withArgs(stranger.address);
+      await expect(registry.connect(stranger).acceptAdmin())
+        .to.be.revertedWithCustomError(registry, "NoAdminProposal");
+      await expect(registry.cancelAdminProposal(stranger.address))
+        .to.be.revertedWithCustomError(registry, "NoAdminProposal");
+    });
+
+    it("only an admin can invite or withdraw, and never the zero address", async function () {
+      const { registry, mfg, stranger } = await loadFixture(deployFixture);
+      await expect(registry.connect(mfg).proposeAdmin(mfg.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await registry.proposeAdmin(stranger.address);
+      await expect(registry.connect(mfg).cancelAdminProposal(stranger.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.proposeAdmin(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(registry, "ZeroAddress");
+    });
+  });
+
+  describe("v2: emergency pause", function () {
+    async function withRegulator() {
+      const f = await deployFixture();
+      await f.registry.registerParticipant(f.stranger.address, "CDSCO", "REG-001", REGULATOR);
+      return { ...f, reg: f.stranger };
+    }
+
+    it("an admin can pause, which stops new batches", async function () {
+      const { registry, admin, mfg, now } = await loadFixture(deployFixture);
+      await expect(registry.pause("Key compromise suspected"))
+        .to.emit(registry, "SystemPaused").withArgs(admin.address, "Key compromise suspected");
+      expect(await registry.paused()).to.equal(true);
+      await expect(
+        registry.connect(mfg).registerBatch("X", "Y", now - DAY, now + 365 * DAY, 10, CID)
+      ).to.be.revertedWithCustomError(registry, "Paused");
+    });
+
+    it("a regulator can pause but only an admin can unpause", async function () {
+      const { registry, admin, reg, mfg, now } = await loadFixture(withRegulator);
+      await registry.connect(reg).pause("Counterfeits in circulation");
+      await expect(registry.connect(reg).unpause())
+        .to.be.revertedWithCustomError(registry, "NotAuthorisedToPause").withArgs(reg.address);
+      await expect(registry.unpause()).to.emit(registry, "SystemUnpaused").withArgs(admin.address);
+      expect(await registry.paused()).to.equal(false);
+      await registry.connect(mfg).registerBatch("X", "Y", now - DAY, now + 365 * DAY, 10, CID);
+    });
+
+    it("nobody else can pause", async function () {
+      const { registry, mfg } = await loadFixture(deployFixture);
+      await expect(registry.connect(mfg).pause("x"))
+        .to.be.revertedWithCustomError(registry, "NotAuthorisedToPause").withArgs(mfg.address);
+    });
+
+    it("refuses pausing twice or unpausing when running", async function () {
+      const { registry } = await loadFixture(deployFixture);
+      await expect(registry.unpause()).to.be.revertedWithCustomError(registry, "NotPaused");
+      await registry.pause("x");
+      await expect(registry.pause("x")).to.be.revertedWithCustomError(registry, "Paused");
+    });
+
+    it("participant management keeps working while paused, so a bad actor can be revoked", async function () {
+      const { registry, mfg, stranger } = await loadFixture(deployFixture);
+      await registry.pause("x");
+      await registry.revokeParticipant(mfg.address);
+      await registry.registerParticipant(stranger.address, "New Pharma", "PH-9", PHARMACY);
+      expect(await registry.isRegistered(mfg.address)).to.equal(false);
     });
   });
 });
