@@ -408,4 +408,93 @@ describe("SupplyChain", function () {
       );
     });
   });
+
+  // ------------------------------------------------------- v2: quarantine + returns
+
+  describe("v2: quarantine", function () {
+    it("a quarantined batch can't be dispatched", async function () {
+      const { sc, inventory, mfg, dist } = await loadFixture(deployFixture);
+      await inventory.setQuarantined(1, true);
+      await expect(sc.connect(mfg).transferCustody(1, dist.address, 10, "Plant"))
+        .to.be.revertedWithCustomError(sc, "BatchIsQuarantined")
+        .withArgs(1);
+    });
+
+    it("quarantine while in transit blocks acceptance; the recipient can still reject", async function () {
+      const { sc, inventory, mfg, dist } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 400, "Plant");
+      await inventory.setQuarantined(1, true);
+      await expect(sc.connect(dist).acceptConsignment(1))
+        .to.be.revertedWithCustomError(sc, "BatchIsQuarantined")
+        .withArgs(1);
+      await sc.connect(dist).rejectConsignment(1, "On hold");
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(1000n);
+    });
+  });
+
+  describe("v2: returnToManufacturer", function () {
+    async function withStockAtPharmacy() {
+      const f = await deployFixture();
+      await f.registry.setBatchManufacturer(1, f.mfg.address);
+      await f.sc.connect(f.mfg).transferCustody(1, f.pharm.address, 300, "Plant");
+      await f.sc.connect(f.pharm).acceptConsignment(1);
+      return f;
+    }
+
+    it("refuses to send good stock back upstream", async function () {
+      const { sc, pharm } = await loadFixture(withStockAtPharmacy);
+      await expect(sc.connect(pharm).returnToManufacturer(1, 10, "x"))
+        .to.be.revertedWithCustomError(sc, "ReturnNotAllowed")
+        .withArgs(1);
+    });
+
+    it("returns recalled stock straight to the manufacturer and records it", async function () {
+      const { sc, inventory, mfg, pharm } = await loadFixture(withStockAtPharmacy);
+      await inventory.setRecalled(1, true);
+      await expect(sc.connect(pharm).returnToManufacturer(1, 120, "Recall return"))
+        .to.emit(sc, "StockReturned")
+        .withArgs(1, pharm.address, mfg.address, 120, "Recall return");
+
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(180n);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(820n);
+      const trail = await sc.getCustodyHistory(1);
+      const last = trail[trail.length - 1];
+      expect(last.from).to.equal(pharm.address);
+      expect(last.to).to.equal(mfg.address);
+      expect(last.quantity).to.equal(120n);
+      expect(last.location).to.equal("Recall return");
+    });
+
+    it("also works for quarantined and expired stock", async function () {
+      const { sc, inventory, pharm } = await loadFixture(withStockAtPharmacy);
+      await inventory.setQuarantined(1, true);
+      await sc.connect(pharm).returnToManufacturer(1, 10, "For testing");
+      await inventory.setQuarantined(1, false);
+      await inventory.setExpired(1, true);
+      await sc.connect(pharm).returnToManufacturer(1, 10, "Expired");
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(280n);
+    });
+
+    it("works even after the holder has been revoked", async function () {
+      // The mock has no revoke; a holder that isn't registered is the same case.
+      const { sc, inventory, pharm } = await loadFixture(withStockAtPharmacy);
+      const [, , , , , , , outsider] = await ethers.getSigners();
+      await inventory.updateStock(1, pharm.address, outsider.address, 5);
+      await inventory.setRecalled(1, true);
+      await sc.connect(outsider).returnToManufacturer(1, 5, "Recall return");
+      expect(await inventory.getFacilityStock(outsider.address, 1)).to.equal(0n);
+    });
+
+    it("refuses zero, the manufacturer itself, and more than the holder has", async function () {
+      const { sc, inventory, mfg, pharm } = await loadFixture(withStockAtPharmacy);
+      await inventory.setRecalled(1, true);
+      await expect(sc.connect(pharm).returnToManufacturer(1, 0, "x"))
+        .to.be.revertedWithCustomError(sc, "ZeroQuantity");
+      await expect(sc.connect(mfg).returnToManufacturer(1, 10, "x"))
+        .to.be.revertedWithCustomError(sc, "SelfTransfer");
+      await expect(sc.connect(pharm).returnToManufacturer(1, 301, "x"))
+        .to.be.revertedWithCustomError(sc, "InsufficientStock")
+        .withArgs(1, 300, 301);
+    });
+  });
 });
