@@ -26,6 +26,13 @@ const MESSAGES = {
   NotPharmacy: () => "Only a pharmacy can dispense.",
   NotAuthorisedToRecall: () => "Only the batch's manufacturer (while still active) or a regulator can recall it.",
   AlreadyRecalled: (a) => `Batch #${a[0]} is already recalled.`,
+  BatchIsQuarantined: (a) => `Batch #${a[0]} is on hold while a problem is investigated. It can't be moved or dispensed until it's released.`,
+  AlreadyQuarantined: (a) => `Batch #${a[0]} is already on hold.`,
+  NotQuarantined: (a) => `Batch #${a[0]} isn't on hold.`,
+  NotAuthorisedToQuarantine: () => "Only the batch's manufacturer (while still active) or a regulator can place a hold. A hold placed by a regulator can only be lifted by a regulator.",
+  StockNotDisposable: (a) => `Batch #${a[0]} is still good. Only recalled or expired stock can be destroyed.`,
+  ReturnNotAllowed: (a) => `Batch #${a[0]} is still good, so it can't go back to the manufacturer. Returns are for recalled, on-hold or expired stock.`,
+  InvalidStatusTransition: () => "That status change isn't allowed. A recall is final and can't be undone.",
 };
 
 const short = (addr) => `${addr.slice(0, 6)}…${addr.slice(-4)}`;
