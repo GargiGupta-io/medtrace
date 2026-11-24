@@ -20,6 +20,13 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
     mapping(uint256 => address[]) private holders;
     mapping(uint256 => mapping(address => uint256)) private holderSlot;
 
+    mapping(uint256 => bool) private quarantined;
+    /// @dev True when a regulator imposed the current quarantine, so the manufacturer can't lift it.
+    mapping(uint256 => bool) private quarantinedByRegulator;
+    mapping(uint256 => DestructionRecord[]) private destructionLog;
+    mapping(uint256 => uint256) private totalDispensed;
+    mapping(uint256 => uint256) private totalDestroyed;
+
     constructor(address registry_, address supplyChain_) {
         registry = IDrugRegistry(registry_);
         supplyChain = supplyChain_;
@@ -46,7 +53,9 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         delete holderSlot[batchId][facility];
     }
 
-    function _debit(uint256 batchId, address facility, uint256 quantity) private {
+    /// @dev `alert` is false for write-offs: a low-stock warning for a recalled
+    ///      or expired batch would only be noise.
+    function _debit(uint256 batchId, address facility, uint256 quantity, bool alert) private {
         uint256 available = facilityStock[facility][batchId];
 
         if (available < quantity) {
@@ -62,9 +71,16 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
 
         uint256 threshold = reorderThreshold[facility][batchId];
 
-        if (remaining < threshold) {
+        if (alert && remaining < threshold) {
             emit LowStockAlert(batchId, facility, remaining, threshold);
         }
+    }
+
+    /// @dev The batch's original manufacturer, and only while it still holds
+    ///      MANUFACTURER: a revoked manufacturer loses recall and quarantine powers.
+    function _isOwnManufacturer(uint256 batchId) private view returns (bool) {
+        return msg.sender == registry.getBatchDetails(batchId).manufacturer &&
+            registry.hasRole(Roles.MANUFACTURER, msg.sender);
     }
 
     function _maybeWarnExpiry(uint256 batchId) private {
@@ -93,7 +109,7 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         }
 
         if (from != address(0)) {
-            _debit(batchId, from, quantity);
+            _debit(batchId, from, quantity, true);
         }
 
         if (facilityStock[to][batchId] == 0) {
@@ -122,11 +138,16 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
             revert BatchIsRecalled(batchId);
         }
 
+        if (quarantined[batchId]) {
+            revert BatchIsQuarantined(batchId);
+        }
+
         if (!checkExpiry(batchId)) {
             revert BatchIsExpired(batchId);
         }
 
-        _debit(batchId, msg.sender, quantity);
+        _debit(batchId, msg.sender, quantity, true);
+        totalDispensed[batchId] += quantity;
 
         dispensingLog[batchId].push(
             DispenseRecord(msg.sender, quantity, uint64(block.timestamp))
@@ -140,13 +161,7 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         uint256 batchId,
         string calldata reason
     ) external override nonReentrant {
-        IDrugRegistry.Batch memory batch = registry.getBatchDetails(batchId);
-
-        // The original manufacturer may recall only while it is still an active
-        // manufacturer; once revoked, recalls go through a regulator.
-        bool isOwnManufacturer = msg.sender == batch.manufacturer &&
-            registry.hasRole(Roles.MANUFACTURER, msg.sender);
-        if (!isOwnManufacturer && !registry.hasRole(Roles.REGULATOR, msg.sender)) {
+        if (!_isOwnManufacturer(batchId) && !registry.hasRole(Roles.REGULATOR, msg.sender)) {
             revert NotAuthorisedToRecall(msg.sender);
         }
 
@@ -154,7 +169,10 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
             revert AlreadyRecalled(batchId);
         }
 
+        // A quarantine can be escalated: the recall replaces it.
         recalled[batchId] = true;
+        delete quarantined[batchId];
+        delete quarantinedByRegulator[batchId];
 
         emit BatchRecalled(batchId, msg.sender, reason);
 
@@ -162,6 +180,85 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
             batchId,
             IDrugRegistry.BatchStatus.Recalled
         );
+    }
+
+    function quarantineBatch(
+        uint256 batchId,
+        string calldata reason
+    ) external override nonReentrant {
+        bool isRegulator = registry.hasRole(Roles.REGULATOR, msg.sender);
+        if (!isRegulator && !_isOwnManufacturer(batchId)) {
+            revert NotAuthorisedToQuarantine(msg.sender);
+        }
+
+        if (recalled[batchId]) {
+            revert BatchIsRecalled(batchId);
+        }
+
+        if (quarantined[batchId]) {
+            revert AlreadyQuarantined(batchId);
+        }
+
+        quarantined[batchId] = true;
+        quarantinedByRegulator[batchId] = isRegulator;
+
+        emit BatchQuarantined(batchId, msg.sender, reason);
+
+        registry.setBatchStatus(
+            batchId,
+            IDrugRegistry.BatchStatus.Quarantined
+        );
+    }
+
+    function releaseQuarantine(
+        uint256 batchId
+    ) external override nonReentrant {
+        if (!quarantined[batchId]) {
+            revert NotQuarantined(batchId);
+        }
+
+        // A regulator can always release. The manufacturer can release only a
+        // hold it placed itself, never one a regulator imposed.
+        bool allowed = registry.hasRole(Roles.REGULATOR, msg.sender) ||
+            (!quarantinedByRegulator[batchId] && _isOwnManufacturer(batchId));
+        if (!allowed) {
+            revert NotAuthorisedToQuarantine(msg.sender);
+        }
+
+        delete quarantined[batchId];
+        delete quarantinedByRegulator[batchId];
+
+        emit QuarantineReleased(batchId, msg.sender);
+
+        registry.setBatchStatus(
+            batchId,
+            IDrugRegistry.BatchStatus.Active
+        );
+    }
+
+    function destroyStock(
+        uint256 batchId,
+        uint256 quantity,
+        string calldata reason
+    ) external override nonReentrant {
+        if (quantity == 0) {
+            revert ZeroQuantity();
+        }
+
+        // Only dead stock can be written off. Good stock, and stock that is
+        // merely quarantined (it may be released, and is evidence), stays put.
+        if (!recalled[batchId] && checkExpiry(batchId)) {
+            revert StockNotDisposable(batchId);
+        }
+
+        _debit(batchId, msg.sender, quantity, false);
+        totalDestroyed[batchId] += quantity;
+
+        destructionLog[batchId].push(
+            DestructionRecord(msg.sender, quantity, uint64(block.timestamp), reason)
+        );
+
+        emit StockDestroyed(batchId, msg.sender, quantity, reason);
     }
 
     function setReorderThreshold(
@@ -183,6 +280,12 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         return recalled[batchId];
     }
 
+    function isQuarantined(
+        uint256 batchId
+    ) external view override returns (bool) {
+        return quarantined[batchId];
+    }
+
     function getFacilityStock(
         address facility,
         uint256 batchId
@@ -200,6 +303,21 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         uint256 batchId
     ) external view override returns (DispenseRecord[] memory) {
         return dispensingLog[batchId];
+    }
+
+    function getDestructionLog(
+        uint256 batchId
+    ) external view override returns (DestructionRecord[] memory) {
+        return destructionLog[batchId];
+    }
+
+    function getRecallProgress(
+        uint256 batchId
+    ) external view override returns (RecallProgress memory progress) {
+        progress.produced = registry.getBatchDetails(batchId).quantity;
+        progress.dispensed = totalDispensed[batchId];
+        progress.destroyed = totalDestroyed[batchId];
+        progress.outstanding = progress.produced - progress.dispensed - progress.destroyed;
     }
 
     function getReorderThreshold(
