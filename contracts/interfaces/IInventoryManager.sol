@@ -26,6 +26,24 @@ interface IInventoryManager {
         uint64 timestamp;
     }
 
+    /// @dev One write-off of recalled or expired stock.
+    struct DestructionRecord {
+        address holder;
+        uint256 quantity;
+        uint64 timestamp;
+        string reason;
+    }
+
+    /// @dev Where every unit of a batch has gone. produced = dispensed +
+    ///      destroyed + outstanding, always. During a recall, outstanding is
+    ///      the number still to be found.
+    struct RecallProgress {
+        uint256 produced;
+        uint256 dispensed;
+        uint256 destroyed;
+        uint256 outstanding;
+    }
+
     // ----------------------------------------------------------------- events
 
     event StockUpdated(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity);
@@ -35,6 +53,9 @@ interface IInventoryManager {
     /// @dev Emitted by dispenseDrug and updateStock when the batch is within
     ///      30 days of expiry. (View functions can't emit, so checkExpiry can't.)
     event ExpiryWarning(uint256 indexed batchId, uint64 expiryDate);
+    event BatchQuarantined(uint256 indexed batchId, address indexed issuedBy, string reason);
+    event QuarantineReleased(uint256 indexed batchId, address indexed releasedBy);
+    event StockDestroyed(uint256 indexed batchId, address indexed holder, uint256 quantity, string reason);
 
     // ----------------------------------------------------------------- errors
 
@@ -46,6 +67,14 @@ interface IInventoryManager {
     error BatchIsRecalled(uint256 batchId);
     error AlreadyRecalled(uint256 batchId);
     error ZeroQuantity();
+    error BatchIsQuarantined(uint256 batchId);
+    error AlreadyQuarantined(uint256 batchId);
+    error NotQuarantined(uint256 batchId);
+    /// @dev Only the batch's active manufacturer or a regulator may quarantine;
+    ///      a quarantine a regulator imposed can only be lifted by a regulator.
+    error NotAuthorisedToQuarantine(address caller);
+    /// @dev Stock can be destroyed only once its batch is recalled or expired.
+    error StockNotDisposable(uint256 batchId);
 
     // ---------------------------------------------------------------- actions
 
@@ -62,7 +91,7 @@ interface IInventoryManager {
 
     /// @notice Dispense units to a patient. PHARMACY role only.
     /// @dev Reverts in order: NotPharmacy, ZeroQuantity, BatchIsRecalled,
-    ///      BatchIsExpired, InsufficientStock.
+    ///      BatchIsQuarantined, BatchIsExpired, InsufficientStock.
     ///      Then debit, append a DispenseRecord, emit DrugDispensed (and
     ///      LowStockAlert / ExpiryWarning where they apply).
     function dispenseDrug(uint256 batchId, uint256 quantity) external;
@@ -70,10 +99,32 @@ interface IInventoryManager {
     /// @notice Freeze a batch across the whole network.
     /// @dev Caller must be the batch's original manufacturer AND still hold
     ///      MANUFACTURER (a revoked manufacturer can't recall), OR hold REGULATOR.
+    ///      Works on an Active or Quarantined batch (a quarantine can be
+    ///      escalated; the quarantine flag is cleared). A recall is final.
     ///      Sets the recall flag, calls registry.setBatchStatus(batchId, Recalled),
     ///      emits BatchRecalled.
     ///      Reverts: NotAuthorisedToRecall, AlreadyRecalled.
     function flagRecall(uint256 batchId, string calldata reason) external;
+
+    /// @notice Put a batch on hold while a suspected problem is investigated.
+    /// @dev Same freeze as a recall (no transfers, no dispensing) but it can
+    ///      be lifted. Caller: the batch's active manufacturer, or a regulator.
+    ///      Calls registry.setBatchStatus(batchId, Quarantined), emits BatchQuarantined.
+    ///      Reverts in order: NotAuthorisedToQuarantine, BatchIsRecalled, AlreadyQuarantined.
+    function quarantineBatch(uint256 batchId, string calldata reason) external;
+
+    /// @notice Lift a quarantine. The batch goes back to Active.
+    /// @dev A regulator may always release. The manufacturer may release only
+    ///      a quarantine it imposed itself.
+    ///      Reverts in order: NotQuarantined, NotAuthorisedToQuarantine.
+    function releaseQuarantine(uint256 batchId) external;
+
+    /// @notice Write off msg.sender's own units of a recalled or expired batch.
+    /// @dev Any account holding units may call it, even a revoked one, so dead
+    ///      stock never sits on the books. Appends a DestructionRecord and
+    ///      emits StockDestroyed.
+    ///      Reverts in order: ZeroQuantity, StockNotDisposable, InsufficientStock.
+    function destroyStock(uint256 batchId, uint256 quantity, string calldata reason) external;
 
     /// @notice Set the low-stock level for msg.sender's own facility.
     function setReorderThreshold(uint256 batchId, uint256 threshold) external;
@@ -85,6 +136,8 @@ interface IInventoryManager {
 
     function isRecalled(uint256 batchId) external view returns (bool);
 
+    function isQuarantined(uint256 batchId) external view returns (bool);
+
     function getFacilityStock(address facility, uint256 batchId) external view returns (uint256);
 
     /// @notice Every account still holding units of this batch, including the
@@ -92,6 +145,11 @@ interface IInventoryManager {
     function getAffectedHolders(uint256 batchId) external view returns (address[] memory);
 
     function getDispensingLog(uint256 batchId) external view returns (DispenseRecord[] memory);
+
+    function getDestructionLog(uint256 batchId) external view returns (DestructionRecord[] memory);
+
+    /// @notice How much of a batch has been dispensed, destroyed, or is still out there.
+    function getRecallProgress(uint256 batchId) external view returns (RecallProgress memory);
 
     function getReorderThreshold(address facility, uint256 batchId) external view returns (uint256);
 }
