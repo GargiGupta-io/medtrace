@@ -440,4 +440,40 @@ describe("DrugRegistry", function () {
         .withArgs(now + 10 * DAY, now + 30 * DAY);
     });
   });
+
+  describe("v2: status transitions", function () {
+    const ACTIVE = 0, RECALLED = 1, QUARANTINED = 2;
+
+    it("a batch can be quarantined and released again", async function () {
+      const { registry, inventory } = await loadFixture(withBatchFixture);
+      await expect(registry.connect(inventory).setBatchStatus(1, QUARANTINED))
+        .to.emit(registry, "BatchStatusChanged").withArgs(1, QUARANTINED);
+      await registry.connect(inventory).setBatchStatus(1, ACTIVE);
+      expect((await registry.getBatchDetails(1)).status).to.equal(ACTIVE);
+    });
+
+    it("a quarantined batch can be escalated to a recall", async function () {
+      const { registry, inventory } = await loadFixture(withBatchFixture);
+      await registry.connect(inventory).setBatchStatus(1, QUARANTINED);
+      await registry.connect(inventory).setBatchStatus(1, RECALLED);
+      expect((await registry.getBatchDetails(1)).status).to.equal(RECALLED);
+    });
+
+    it("a recall can never be undone", async function () {
+      const { registry, inventory } = await loadFixture(withBatchFixture);
+      await registry.connect(inventory).setBatchStatus(1, RECALLED);
+      for (const to of [ACTIVE, QUARANTINED, RECALLED]) {
+        await expect(registry.connect(inventory).setBatchStatus(1, to))
+          .to.be.revertedWithCustomError(registry, "InvalidStatusTransition")
+          .withArgs(RECALLED, to);
+      }
+    });
+
+    it("setting the status a batch already has is refused", async function () {
+      const { registry, inventory } = await loadFixture(withBatchFixture);
+      await expect(registry.connect(inventory).setBatchStatus(1, ACTIVE))
+        .to.be.revertedWithCustomError(registry, "InvalidStatusTransition")
+        .withArgs(ACTIVE, ACTIVE);
+    });
+  });
 });
