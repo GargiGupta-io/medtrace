@@ -20,9 +20,17 @@ interface IDrugRegistry is IAccessControl {
     /// @dev Expiry is never stored as a status. It is derived from
     ///      expiryDate vs block.timestamp, because a stored flag can't
     ///      flip itself when the date passes.
+    ///
+    ///      Allowed moves (anything else reverts InvalidStatusTransition):
+    ///        Active      -> Quarantined | Recalled
+    ///        Quarantined -> Active      | Recalled
+    ///        Recalled    -> (nothing: a recall is final)
+    ///      Quarantined is appended last so Active = 0 and Recalled = 1 keep
+    ///      the values they had before it existed.
     enum BatchStatus {
         Active,
-        Recalled
+        Recalled,
+        Quarantined
     }
 
     struct Participant {
@@ -76,6 +84,8 @@ interface IDrugRegistry is IAccessControl {
     error FieldTooLong();
     /// @dev The certificate reference doesn't look like an IPFS CID (Qm... or b...).
     error InvalidCid();
+    /// @dev The status change isn't one of the allowed moves listed on BatchStatus.
+    error InvalidStatusTransition(BatchStatus from, BatchStatus to);
 
     // ------------------------------------------------------ participant admin
 
@@ -121,8 +131,8 @@ interface IDrugRegistry is IAccessControl {
     ) external returns (uint256 batchId);
 
     /// @notice Update a batch's status. Callable ONLY by the InventoryManager contract.
-    /// @dev Used by InventoryManager.flagRecall.
-    ///      Reverts: CallerNotInventory, BatchNotFound.
+    /// @dev Used by InventoryManager.flagRecall, quarantineBatch and releaseQuarantine.
+    ///      Reverts: CallerNotInventory, BatchNotFound, InvalidStatusTransition.
     function setBatchStatus(uint256 batchId, BatchStatus status) external;
 
     // ------------------------------------------------------------------ views
