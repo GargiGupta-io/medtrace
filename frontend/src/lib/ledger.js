@@ -3,6 +3,10 @@ import { daysUntil, shortAddr } from "./format.js";
 
 export const EXPIRY_WARNING_DAYS = 30;
 
+// DrugRegistry.BatchStatus, in contract order. Quarantined was added last.
+export const BATCH_STATUS = { Active: 0, Recalled: 1, Quarantined: 2 };
+export const isQuarantined = (b) => Number(b.status) === BATCH_STATUS.Quarantined;
+
 // Every participant ever registered, with their CURRENT name, licence, role and status.
 export async function loadParticipants(registry, fromBlock) {
   const joined = await queryAll(registry, registry.filters.ParticipantRegistered(), fromBlock);
@@ -44,8 +48,9 @@ export function makeNameOf(participants, escrowAddress) {
   };
 }
 
-export function batchStatus({ recalled, expiryDate }) {
+export function batchStatus({ recalled, quarantined, expiryDate }) {
   if (recalled) return { tone: "red", label: "Recalled", frozen: true };
+  if (quarantined) return { tone: "amber", label: "On hold", frozen: true };
   const days = daysUntil(expiryDate);
   if (days <= 0) return { tone: "red", label: "Expired", frozen: true };
   if (days <= EXPIRY_WARNING_DAYS) return { tone: "amber", label: `Expires in ${days}d`, frozen: false };
