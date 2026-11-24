@@ -73,6 +73,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (toRole != Roles.DISTRIBUTOR && toRole != Roles.PHARMACY) revert InvalidRoute(_roleOf(p.from), toRole);
         // A batch can be recalled or expire while it is on the road.
         if (inventory.isRecalled(batchId)) revert BatchIsRecalled(batchId);
+        if (inventory.isQuarantined(batchId)) revert BatchIsQuarantined(batchId);
         if (!inventory.checkExpiry(batchId)) revert BatchIsExpired(batchId);
 
         // Delete before calling out, so a consignment can never be accepted twice.
@@ -113,6 +114,35 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         emit TransferCancelled(batchId, msg.sender, to);
 
         inventory.updateStock(batchId, address(this), msg.sender, p.quantity);
+    }
+
+    /// @inheritdoc ISupplyChain
+    function returnToManufacturer(uint256 batchId, uint256 quantity, string calldata reason)
+        external
+        nonReentrant
+    {
+        if (quantity == 0) revert ZeroQuantity();
+        bool dead = inventory.isRecalled(batchId) || inventory.isQuarantined(batchId) || !inventory.checkExpiry(batchId);
+        if (!dead) revert ReturnNotAllowed(batchId);
+
+        address manufacturer = registry.getBatchDetails(batchId).manufacturer;
+        if (msg.sender == manufacturer) revert SelfTransfer();
+
+        uint256 available = inventory.getFacilityStock(msg.sender, batchId);
+        if (available < quantity) revert InsufficientStock(batchId, available, quantity);
+
+        custodyTrail[batchId].push(
+            TransferRecord({
+                from: msg.sender,
+                to: manufacturer,
+                quantity: quantity,
+                timestamp: uint64(block.timestamp),
+                location: reason
+            })
+        );
+        emit StockReturned(batchId, msg.sender, manufacturer, quantity, reason);
+
+        inventory.updateStock(batchId, msg.sender, manufacturer, quantity);
     }
 
     /// @inheritdoc ISupplyChain
@@ -166,6 +196,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (!_isAllowedRoute(fromRole, toRole)) revert InvalidRoute(fromRole, toRole);
 
         if (inventory.isRecalled(batchId)) revert BatchIsRecalled(batchId);
+        if (inventory.isQuarantined(batchId)) revert BatchIsQuarantined(batchId);
         if (!inventory.checkExpiry(batchId)) revert BatchIsExpired(batchId);
 
         uint256 available = inventory.getFacilityStock(from, batchId);
