@@ -126,6 +126,10 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         uint256 batchId,
         uint256 quantity
     ) external override nonReentrant {
+        if (registry.paused()) {
+            revert Paused();
+        }
+
         if (!registry.hasRole(Roles.PHARMACY, msg.sender)) {
             revert NotPharmacy(msg.sender);
         }
