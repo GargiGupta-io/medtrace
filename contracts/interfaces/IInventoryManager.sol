@@ -151,6 +151,24 @@ interface IInventoryManager {
 
     function getDestructionLog(uint256 batchId) external view returns (DestructionRecord[] memory);
 
+    // Paged reads. A popular batch can reach thousands of holders and
+    // dispensing records; these keep every call bounded. An offset past the
+    // end returns an empty array, and the page is clipped at the end.
+
+    function getAffectedHoldersCount(uint256 batchId) external view returns (uint256);
+
+    function getAffectedHoldersPage(uint256 batchId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory);
+
+    function getDispensingLogCount(uint256 batchId) external view returns (uint256);
+
+    function getDispensingLogPage(uint256 batchId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (DispenseRecord[] memory);
+
     /// @notice How much of a batch has been dispensed, destroyed, or is still out there.
     function getRecallProgress(uint256 batchId) external view returns (RecallProgress memory);
 
