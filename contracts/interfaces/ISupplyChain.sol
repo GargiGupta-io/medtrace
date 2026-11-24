@@ -72,6 +72,9 @@ interface ISupplyChain {
     /// @dev Good stock moves only downstream. A return upstream is allowed
     ///      only once the batch is recalled, quarantined or expired.
     error ReturnNotAllowed(uint256 batchId);
+    /// @dev The network is paused (DrugRegistry.paused()). Returns, rejections
+    ///      and cancellations still work; new dispatches and acceptances don't.
+    error Paused();
     error TransferAlreadyPending(uint256 batchId, address to);
     error NoPendingTransfer(uint256 batchId, address to);
     error SelfTransfer();
@@ -83,7 +86,7 @@ interface ISupplyChain {
 
     /// @notice Dispatch `quantity` units of a batch to `to`.
     /// @dev All checks live in one internal validateTransfer(), in this order:
-    ///      ZeroQuantity, ZeroAddress, SelfTransfer,
+    ///      Paused, ZeroQuantity, ZeroAddress, SelfTransfer,
     ///      NotRegistered (msg.sender, then `to`), InvalidRoute,
     ///      BatchIsRecalled, BatchIsQuarantined, BatchIsExpired, InsufficientStock,
     ///      TransferAlreadyPending (one open transfer per batch per recipient).
@@ -91,7 +94,7 @@ interface ISupplyChain {
     function transferCustody(uint256 batchId, address to, uint256 quantity, string calldata location) external;
 
     /// @notice Recipient confirms physical receipt. msg.sender is the recipient.
-    /// @dev Reverts: NoPendingTransfer, NotRegistered (the recipient was
+    /// @dev Reverts: Paused, NoPendingTransfer, NotRegistered (the recipient was
     ///      revoked while the stock was in transit), InvalidRoute (the
     ///      recipient's role changed to one that may not hold stock),
     ///      BatchIsRecalled, BatchIsQuarantined, BatchIsExpired. A blocked
