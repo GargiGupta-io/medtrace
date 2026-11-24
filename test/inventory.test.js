@@ -600,4 +600,42 @@ describe("InventoryManager", function () {
       expect(await inv.getFacilityStock(pharm.address, 1)).to.equal(0);
     });
   });
+
+  describe("v2: paged reads", function () {
+    async function withManyRecords() {
+      const f = await deployFixture();
+      const signers = await ethers.getSigners();
+      // Spread stock over five more holders: mfg, pharm + five = 7 holders.
+      for (const s of signers.slice(10, 15)) {
+        await f.inv.connect(f.scAccount).updateStock(1, f.mfg.address, s.address, 10);
+      }
+      for (let i = 1; i <= 5; i++) await f.inv.connect(f.pharm).dispenseDrug(1, i);
+      return f;
+    }
+
+    it("pages through the holders and matches the full list", async function () {
+      const { inv } = await loadFixture(withManyRecords);
+      expect(await inv.getAffectedHoldersCount(1)).to.equal(7n);
+      const full = [...(await inv.getAffectedHolders(1))];
+      const paged = [...(await inv.getAffectedHoldersPage(1, 0, 3)), ...(await inv.getAffectedHoldersPage(1, 3, 3)), ...(await inv.getAffectedHoldersPage(1, 6, 3))];
+      expect(paged).to.deep.equal(full);
+    });
+
+    it("pages through the dispensing log and matches the full log", async function () {
+      const { inv } = await loadFixture(withManyRecords);
+      expect(await inv.getDispensingLogCount(1)).to.equal(5n);
+      const page = await inv.getDispensingLogPage(1, 1, 2);
+      expect(page.map((r) => r.quantity)).to.deep.equal([2n, 3n]);
+    });
+
+    it("clips at the end and handles an offset past the end, limit 0 and a huge limit", async function () {
+      const { inv } = await loadFixture(withManyRecords);
+      expect((await inv.getDispensingLogPage(1, 3, 100)).length).to.equal(2);
+      expect((await inv.getDispensingLogPage(1, 5, 1)).length).to.equal(0);
+      expect((await inv.getAffectedHoldersPage(1, 50, 1)).length).to.equal(0);
+      expect((await inv.getAffectedHoldersPage(1, 0, 0)).length).to.equal(0);
+      expect((await inv.getAffectedHoldersPage(1, 2, ethers.MaxUint256)).length).to.equal(5);
+      expect((await inv.getDispensingLogPage(99, 0, 10)).length).to.equal(0);
+    });
+  });
 });
