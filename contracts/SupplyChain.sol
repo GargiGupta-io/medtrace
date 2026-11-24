@@ -14,6 +14,9 @@ import {Roles} from "./libraries/Roles.sol";
 ///         while they are in transit.
 /// @dev Owner: Pranav Arora. Spec: contracts/interfaces/ISupplyChain.sol.
 contract SupplyChain is ISupplyChain, ReentrancyGuard {
+    /// @inheritdoc ISupplyChain
+    uint64 public constant TRANSFER_TTL = 30 days;
+
     /// @notice The DrugRegistry: the single list of participants, roles and admins.
     IDrugRegistry public immutable registry;
 
@@ -67,6 +70,8 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (registry.paused()) revert Paused();
         PendingTransfer memory p = pending[batchId][msg.sender];
         if (p.from == address(0)) revert NoPendingTransfer(batchId, msg.sender);
+        uint64 lapsesAt = p.initiatedAt + TRANSFER_TTL;
+        if (block.timestamp >= lapsesAt) revert TransferHasLapsed(batchId, msg.sender, lapsesAt);
         // The recipient may have been revoked, or moved to a role that can't
         // hold stock, after the sender dispatched. Re-check before handing over.
         if (!registry.isRegistered(msg.sender)) revert NotRegistered(msg.sender);
@@ -115,6 +120,19 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         emit TransferCancelled(batchId, msg.sender, to);
 
         inventory.updateStock(batchId, address(this), msg.sender, p.quantity);
+    }
+
+    /// @inheritdoc ISupplyChain
+    function expireTransfer(uint256 batchId, address to) external nonReentrant {
+        PendingTransfer memory p = pending[batchId][to];
+        if (p.from == address(0)) revert NoPendingTransfer(batchId, to);
+        uint64 lapsesAt = p.initiatedAt + TRANSFER_TTL;
+        if (block.timestamp < lapsesAt) revert TransferNotLapsed(batchId, to, lapsesAt);
+
+        delete pending[batchId][to];
+        emit TransferLapsed(batchId, p.from, to, p.quantity, msg.sender);
+
+        inventory.updateStock(batchId, address(this), p.from, p.quantity);
     }
 
     /// @inheritdoc ISupplyChain
@@ -170,6 +188,27 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
     /// @inheritdoc ISupplyChain
     function getCustodyHistory(uint256 batchId) external view returns (TransferRecord[] memory) {
         return custodyTrail[batchId];
+    }
+
+    /// @inheritdoc ISupplyChain
+    function getCustodyHistoryCount(uint256 batchId) external view returns (uint256) {
+        return custodyTrail[batchId].length;
+    }
+
+    /// @inheritdoc ISupplyChain
+    function getCustodyHistoryPage(uint256 batchId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (TransferRecord[] memory page)
+    {
+        TransferRecord[] storage trail = custodyTrail[batchId];
+        uint256 total = trail.length;
+        if (offset >= total) return page;
+        uint256 end = limit > total - offset ? total : offset + limit;
+        page = new TransferRecord[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            page[i - offset] = trail[i];
+        }
     }
 
     /// @inheritdoc ISupplyChain
