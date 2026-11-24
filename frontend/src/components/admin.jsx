@@ -5,8 +5,8 @@ import { ROLES, roleLabel } from "../lib/roles.js";
 import { shortAddr } from "../lib/format.js";
 import { Button, Card, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
 
-// The four roles the admin can hand out. ADMIN itself is never offered:
-// it is granted once, at deployment.
+// The four roles the admin can hand out. ADMIN itself is never offered here:
+// new admins are invited (InviteAdmin) and must accept from their own wallet.
 export const ASSIGNABLE = [ROLES.MANUFACTURER, ROLES.DISTRIBUTOR, ROLES.PHARMACY, ROLES.REGULATOR];
 
 export function RegisterParticipant({ registry, onDone }) {
