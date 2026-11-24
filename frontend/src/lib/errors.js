@@ -36,6 +36,8 @@ const MESSAGES = {
   NotPaused: () => "The network isn't paused.",
   NotAuthorisedToPause: () => "Only an admin or a regulator can pause the network, and only an admin can resume it.",
   NoAdminProposal: () => "There's no admin invitation for that account.",
+  TransferHasLapsed: () => "This consignment waited more than 30 days and has lapsed. It can only be sent back to the sender now.",
+  TransferNotLapsed: () => "This consignment hasn't reached its 30-day limit yet. The recipient can still accept or reject it, or the sender can cancel it.",
   InvalidStatusTransition: () => "That status change isn't allowed. A recall is final and can't be undone.",
 };
 
