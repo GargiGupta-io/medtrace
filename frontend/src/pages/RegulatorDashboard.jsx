@@ -5,12 +5,13 @@ import { roleLabel } from "../lib/roles.js";
 import { shortAddr, toDate, units } from "../lib/format.js";
 import { Badge, Button, Card, Modal, Stat, inputClass } from "../components/ui.jsx";
 import { RecallModal, TrailModal } from "../components/batch.jsx";
+import { PauseControl } from "../components/emergency.jsx";
 
 const FILTERS = ["All", "Active", "Expiring", "Expired", "Recalled"];
 
 // The regulator sees the whole network: every batch, every holder, every
 // recall, and can recall any batch, not just their own.
-export default function RegulatorDashboard({ wallet, profile }) {
+export default function RegulatorDashboard({ wallet, profile, pause }) {
   const ledger = useNetworkLedger(wallet);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
@@ -144,6 +145,8 @@ export default function RegulatorDashboard({ wallet, profile }) {
           </div>
         )}
       </Card>
+
+      <PauseControl registry={wallet.contracts.registry} pause={pause} canResume={false} />
 
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card title="Recall history" subtitle="Who recalled what, and why. Permanent.">
