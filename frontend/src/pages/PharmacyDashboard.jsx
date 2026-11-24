@@ -20,9 +20,10 @@ export default function PharmacyDashboard({ wallet, profile }) {
     for (const b of ledger.holdings) {
       const days = daysUntil(b.expiryDate);
       if (b.recalled) out.push({ b, tone: "red", text: `Recalled. Do not dispense. Return the ${units(b.stock)} units to the manufacturer.` });
+      else if (b.quarantined) out.push({ b, tone: "amber", text: `On hold while a problem is investigated. Don't dispense the ${units(b.stock)} units until the hold is lifted.` });
       else if (days <= 0) out.push({ b, tone: "red", text: `Expired on ${toDate(b.expiryDate)}. It can no longer be dispensed.` });
       else if (days <= EXPIRY_WARNING_DAYS) out.push({ b, tone: "amber", text: `Expires in ${days} days. Dispense it before newer stock.` });
-      if (!b.recalled && b.threshold > 0n && b.stock < b.threshold) out.push({ b, tone: "amber", text: `Low stock: ${units(b.stock)} left, reorder level ${units(b.threshold)}.` });
+      if (!b.recalled && !b.quarantined && b.threshold > 0n && b.stock < b.threshold) out.push({ b, tone: "amber", text: `Low stock: ${units(b.stock)} left, reorder level ${units(b.threshold)}.` });
     }
     return out;
   }, [ledger.holdings]);
@@ -69,7 +70,7 @@ export default function PharmacyDashboard({ wallet, profile }) {
 
       <IncomingConsignments items={ledger.incoming} nameOf={nameOf} supply={wallet.contracts.supply} onDone={ledger.reload} />
 
-      <Card title="Your shelf" subtitle="Soonest expiry first. Dispensing is refused for recalled or expired batches.">
+      <Card title="Your shelf" subtitle="Soonest expiry first. Dispensing is refused for recalled, on-hold or expired batches.">
         {ledger.loading ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : (
