@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { queryAll } from "../lib/contracts.js";
-import { loadIncoming, loadOutgoing, loadParticipants } from "../lib/ledger.js";
+import { isQuarantined, loadIncoming, loadOutgoing, loadParticipants } from "../lib/ledger.js";
 
 // Everything the manufacturer dashboard shows, read straight from the chain.
 // Reloads on every new block, so other people's actions appear without a refresh.
@@ -41,6 +41,7 @@ export function useManufacturerLedger(wallet) {
             ipfsHash: b.ipfsHash,
             stock,
             recalled,
+            quarantined: isQuarantined(b),
             holders: [...holders],
           };
         })
@@ -120,6 +121,7 @@ export function useHolderLedger(wallet) {
             ipfsHash: b.ipfsHash,
             stock,
             recalled,
+            quarantined: isQuarantined(b),
             threshold,
             dispensed: mine.map((r) => ({ batchId: id, drugName: b.drugName, quantity: r.quantity, timestamp: r.timestamp })),
           };
@@ -175,6 +177,7 @@ export function useNetworkLedger(wallet) {
             quantity: b.quantity,
             ipfsHash: b.ipfsHash,
             recalled,
+            quarantined: isQuarantined(b),
             holders,
             holdings: holders.map((h, i) => ({ address: h, stock: stocks[i] })),
             unitsOut: stocks.reduce((s, v) => s + v, 0n),
