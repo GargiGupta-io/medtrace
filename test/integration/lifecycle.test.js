@@ -213,4 +213,41 @@ describe("Integration: full batch lifecycle", function () {
       await inventory.connect(pharm).dispenseDrug(1, 1);
     });
   });
+
+  describe("v2: emergency pause", function () {
+    it("a regulator's pause freezes the network; safety actions still work; an admin resumes it", async function () {
+      const { registry, supply, inventory, admin, mfg, dist1, pharm, reg } = await loadFixture(system);
+      await hop(supply, mfg, pharm, 300);
+      await supply.connect(mfg).transferCustody(1, dist1.address, 500, "route");
+
+      await registry.connect(reg).pause("Suspected key compromise at a distributor");
+
+      const now = await time.latest();
+      await expect(registry.connect(mfg).registerBatch("X", "Y", now - DAY, now + 90 * DAY, 1, "bafkreicert"))
+        .to.be.revertedWithCustomError(registry, "Paused");
+      await expect(supply.connect(mfg).transferCustody(1, pharm.address, 1, "x")).to.be.revertedWithCustomError(supply, "Paused");
+      await expect(supply.connect(dist1).acceptConsignment(1)).to.be.revertedWithCustomError(supply, "Paused");
+      await expect(inventory.connect(pharm).dispenseDrug(1, 1)).to.be.revertedWithCustomError(inventory, "Paused");
+
+      // The point of pausing: deal with the problem while nothing moves.
+      await registry.revokeParticipant(dist1.address);
+      await supply.connect(mfg).cancelTransfer(1, dist1.address);
+      await inventory.connect(reg).quarantineBatch(1, "Checking the batch while paused");
+
+      await expect(registry.connect(reg).unpause()).to.be.revertedWithCustomError(registry, "NotAuthorisedToPause");
+      await expect(registry.connect(admin).unpause()).to.emit(registry, "SystemUnpaused");
+      await inventory.connect(reg).releaseQuarantine(1);
+      await inventory.connect(pharm).dispenseDrug(1, 1);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(9700);
+    });
+
+    it("a new admin joins only by accepting an invitation", async function () {
+      const { registry, stranger } = await loadFixture(system);
+      await expect(registry.grantRole(ethers.ZeroHash, stranger.address)).to.be.revertedWithCustomError(registry, "RoleManagedByRegistry");
+      await registry.proposeAdmin(stranger.address);
+      await registry.connect(stranger).acceptAdmin();
+      await registry.connect(stranger).pause("Drill");
+      expect(await registry.paused()).to.equal(true);
+    });
+  });
 });
