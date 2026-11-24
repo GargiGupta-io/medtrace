@@ -64,6 +64,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
 
     /// @inheritdoc ISupplyChain
     function acceptConsignment(uint256 batchId) external nonReentrant {
+        if (registry.paused()) revert Paused();
         PendingTransfer memory p = pending[batchId][msg.sender];
         if (p.from == address(0)) revert NoPendingTransfer(batchId, msg.sender);
         // The recipient may have been revoked, or moved to a role that can't
@@ -185,6 +186,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
 
     /// @dev Every pre-transfer rule, in the exact order the interface specifies.
     function validateTransfer(uint256 batchId, address from, address to, uint256 quantity) internal view {
+        if (registry.paused()) revert Paused();
         if (quantity == 0) revert ZeroQuantity();
         if (to == address(0)) revert ZeroAddress();
         if (to == from) revert SelfTransfer();
