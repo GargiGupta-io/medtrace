@@ -3,6 +3,12 @@ import { daysUntil, shortAddr } from "./format.js";
 
 export const EXPIRY_WARNING_DAYS = 30;
 
+// SupplyChain.TRANSFER_TTL: a consignment not accepted within 30 days lapses,
+// and anyone can send it back to the sender.
+export const TRANSFER_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const lapsesAt = (initiatedAt) => Number(initiatedAt) + TRANSFER_TTL_SECONDS;
+export const hasLapsed = (initiatedAt) => Date.now() / 1000 >= lapsesAt(initiatedAt);
+
 // DrugRegistry.BatchStatus, in contract order. Quarantined was added last.
 export const BATCH_STATUS = { Active: 0, Recalled: 1, Quarantined: 2 };
 export const isQuarantined = (b) => Number(b.status) === BATCH_STATUS.Quarantined;
