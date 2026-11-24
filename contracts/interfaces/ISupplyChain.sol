@@ -55,6 +55,9 @@ interface ISupplyChain {
     event CustodyTransferAccepted(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity);
     event TransferRejected(uint256 indexed batchId, address indexed from, address indexed to, string reason);
     event TransferCancelled(uint256 indexed batchId, address indexed from, address indexed to);
+    event StockReturned(
+        uint256 indexed batchId, address indexed from, address indexed manufacturer, uint256 quantity, string reason
+    );
 
     // ----------------------------------------------------------------- errors
 
@@ -65,6 +68,10 @@ interface ISupplyChain {
     error InsufficientStock(uint256 batchId, uint256 available, uint256 requested);
     error BatchIsExpired(uint256 batchId);
     error BatchIsRecalled(uint256 batchId);
+    error BatchIsQuarantined(uint256 batchId);
+    /// @dev Good stock moves only downstream. A return upstream is allowed
+    ///      only once the batch is recalled, quarantined or expired.
+    error ReturnNotAllowed(uint256 batchId);
     error TransferAlreadyPending(uint256 batchId, address to);
     error NoPendingTransfer(uint256 batchId, address to);
     error SelfTransfer();
@@ -78,7 +85,7 @@ interface ISupplyChain {
     /// @dev All checks live in one internal validateTransfer(), in this order:
     ///      ZeroQuantity, ZeroAddress, SelfTransfer,
     ///      NotRegistered (msg.sender, then `to`), InvalidRoute,
-    ///      BatchIsRecalled, BatchIsExpired, InsufficientStock,
+    ///      BatchIsRecalled, BatchIsQuarantined, BatchIsExpired, InsufficientStock,
     ///      TransferAlreadyPending (one open transfer per batch per recipient).
     ///      Then: inventory.updateStock(batchId, msg.sender, address(this), quantity).
     function transferCustody(uint256 batchId, address to, uint256 quantity, string calldata location) external;
@@ -87,8 +94,8 @@ interface ISupplyChain {
     /// @dev Reverts: NoPendingTransfer, NotRegistered (the recipient was
     ///      revoked while the stock was in transit), InvalidRoute (the
     ///      recipient's role changed to one that may not hold stock),
-    ///      BatchIsRecalled, BatchIsExpired. A blocked consignment stays in
-    ///      escrow until the sender cancels it.
+    ///      BatchIsRecalled, BatchIsQuarantined, BatchIsExpired. A blocked
+    ///      consignment stays in escrow until the sender cancels it.
     ///      Then: updateStock(batchId, address(this), msg.sender, qty),
     ///      append a TransferRecord, delete the pending entry.
     function acceptConsignment(uint256 batchId) external;
@@ -102,6 +109,16 @@ interface ISupplyChain {
     /// @dev ALWAYS allowed. This is what stops a batch getting stuck in limbo
     ///      if a recipient never responds. Reverts only NoPendingTransfer.
     function cancelTransfer(uint256 batchId, address to) external;
+
+    /// @notice Send msg.sender's own units of a recalled, quarantined or
+    ///         expired batch straight back to the batch's manufacturer.
+    /// @dev The reverse-logistics path: no escrow and no acceptance step, so a
+    ///      return can't be blocked. Works even if the sender has since been
+    ///      revoked. Appends a TransferRecord whose location is `reason`.
+    ///      Reverts in order: ZeroQuantity, ReturnNotAllowed, SelfTransfer
+    ///      (the manufacturer itself), InsufficientStock.
+    ///      Then: inventory.updateStock(batchId, msg.sender, manufacturer, quantity).
+    function returnToManufacturer(uint256 batchId, uint256 quantity, string calldata reason) external;
 
     /// @notice Give the manufacturer custody of a newly registered batch.
     ///         Callable ONLY by the DrugRegistry contract.
