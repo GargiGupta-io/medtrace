@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { deployments, NETWORKS, PUBLIC_CHAIN_ID, readProvider } from "../lib/config.js";
 import { allErrors, getContracts, queryAll } from "../lib/contracts.js";
-import { loadParticipants, makeNameOf } from "../lib/ledger.js";
+import { isQuarantined, loadParticipants, makeNameOf } from "../lib/ledger.js";
 import { daysUntil, toDate, units } from "../lib/format.js";
 import { IPFS_GATEWAY } from "../lib/ipfs.js";
 import { Button, Card, inputClass } from "../components/ui.jsx";
@@ -83,22 +83,29 @@ async function verify(deployment, batchId) {
     if (name === "BatchNotFound") return { notFound: true };
     throw e;
   }
-  const [participants, trail, recalled, recalls] = await Promise.all([
+  const quarantined = isQuarantined(batch);
+  const [participants, trail, recalled, recalls, holds] = await Promise.all([
     loadParticipants(registry, from),
     supply.getCustodyHistory(batchId),
     inventory.isRecalled(batchId),
     queryAll(inventory, inventory.filters.BatchRecalled(batchId), from),
+    quarantined ? queryAll(inventory, inventory.filters.BatchQuarantined(batchId), from) : [],
   ]);
   let recall = null;
   if (recalled && recalls.length) {
     const ev = recalls.at(-1);
     recall = { reason: ev.args.reason, by: ev.args.issuedBy, timestamp: (await provider.getBlock(ev.blockNumber)).timestamp };
   }
-  return { batch, participants, trail: [...trail], recalled, recall, nameOf: makeNameOf(participants, deployment.contracts.SupplyChain) };
+  const hold = holds.length ? { reason: holds.at(-1).args.reason, by: holds.at(-1).args.issuedBy } : null;
+  return { batch, participants, trail: [...trail], recalled, recall, quarantined, hold, nameOf: makeNameOf(participants, deployment.contracts.SupplyChain) };
 }
 
 function Verdict({ tone, title, text }) {
-  const style = tone === "green" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900";
+  const style = {
+    green: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    amber: "border-amber-200 bg-amber-50 text-amber-900",
+    red: "border-rose-200 bg-rose-50 text-rose-900",
+  }[tone];
   return (
     <div className={`rounded-xl border px-5 py-4 ${style}`} role="status">
       <p className="text-lg font-semibold">{title}</p>
@@ -108,14 +115,16 @@ function Verdict({ tone, title, text }) {
 }
 
 function BatchReport({ r }) {
-  const { batch: b, nameOf, recall } = r;
+  const { batch: b, nameOf, recall, hold } = r;
   const maker = nameOf(b.manufacturer);
   const days = daysUntil(b.expiryDate);
   const verdict = r.recalled
     ? { tone: "red", title: "Recalled. Do not use.", text: `Recalled${recall ? ` on ${toDate(recall.timestamp)} by ${nameOf(recall.by)}: "${recall.reason}"` : ""}. Return it to the pharmacy.` }
     : days <= 0
       ? { tone: "red", title: "Expired. Do not use.", text: `This batch expired on ${toDate(b.expiryDate)}.` }
-      : { tone: "green", title: "Genuine", text: `Registered on the ledger by ${maker}, a licensed manufacturer. Expires ${toDate(b.expiryDate)}.` };
+      : r.quarantined
+        ? { tone: "amber", title: "On hold. Don't use it yet.", text: `This batch is genuine but on hold while a problem is investigated${hold ? ` (${nameOf(hold.by)}: "${hold.reason}")` : ""}. Ask your pharmacist for a replacement.` }
+        : { tone: "green", title: "Genuine", text: `Registered on the ledger by ${maker}, a licensed manufacturer. Expires ${toDate(b.expiryDate)}.` };
 
   return (
     <>
