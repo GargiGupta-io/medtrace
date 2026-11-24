@@ -122,6 +122,9 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
         if (msg.sender != inventoryManager) revert CallerNotInventory(msg.sender);
         if (!batchExists(batchId)) revert BatchNotFound(batchId);
 
+        BatchStatus current = batches[batchId].status;
+        if (!_isAllowedStatusMove(current, status)) revert InvalidStatusTransition(current, status);
+
         batches[batchId].status = status;
         emit BatchStatusChanged(batchId, status);
     }
@@ -182,6 +185,12 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
 
     /// @dev A cheap shape check, not full CID decoding: CIDv0 starts with "Qm",
     ///      CIDv1 in base32 starts with "b". The frontend does the full check.
+    /// @dev Active <-> Quarantined, and either of them -> Recalled. Recalled is final.
+    function _isAllowedStatusMove(BatchStatus from, BatchStatus to) private pure returns (bool) {
+        if (from == BatchStatus.Recalled || from == to) return false;
+        return true;
+    }
+
     function _looksLikeCid(string calldata cid) private pure returns (bool) {
         bytes calldata b = bytes(cid);
         if (b.length >= 2 && b[0] == "Q" && b[1] == "m") return true;
