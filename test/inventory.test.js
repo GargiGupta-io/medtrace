@@ -581,4 +581,23 @@ describe("InventoryManager", function () {
       expect(p.outstanding).to.equal(400);
     });
   });
+
+  describe("v2: emergency pause", function () {
+    it("no dispensing while paused, and it resumes after", async function () {
+      const { inv, registry, pharm } = await loadFixture(deployFixture);
+      await registry.setPaused(true);
+      await expect(inv.connect(pharm).dispenseDrug(1, 1)).to.be.revertedWithCustomError(inv, "Paused");
+      await registry.setPaused(false);
+      await inv.connect(pharm).dispenseDrug(1, 1);
+    });
+
+    it("recall, quarantine and destruction still work while paused", async function () {
+      const { inv, registry, mfg, reg, pharm } = await loadFixture(deployFixture);
+      await registry.setPaused(true);
+      await inv.connect(mfg).quarantineBatch(1, "x");
+      await inv.connect(reg).flagRecall(1, "bad");
+      await inv.connect(pharm).destroyStock(1, 100, "x");
+      expect(await inv.getFacilityStock(pharm.address, 1)).to.equal(0);
+    });
+  });
 });
