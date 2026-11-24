@@ -124,6 +124,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "Paused",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
