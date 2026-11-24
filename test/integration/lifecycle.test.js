@@ -161,4 +161,56 @@ describe("Integration: full batch lifecycle", function () {
       expect(await registry.isRegistered(stranger.address)).to.equal(false);
     });
   });
+
+  describe("v2: a recall from first suspicion to the last unit", function () {
+    it("quarantine, escalate to recall, then return and destroy until nothing is unaccounted for", async function () {
+      const { registry, supply, inventory, mfg, dist1, pharm, reg } = await loadFixture(system);
+      await hop(supply, mfg, dist1, 4000);
+      await hop(supply, dist1, pharm, 500);
+      await inventory.connect(pharm).dispenseDrug(1, 20);
+
+      // Suspicion: the regulator quarantines. Nothing moves, nothing is dispensed.
+      await inventory.connect(reg).quarantineBatch(1, "Complaint: discoloured tablets");
+      expect((await registry.getBatchDetails(1)).status).to.equal(2);
+      await expect(inventory.connect(pharm).dispenseDrug(1, 1)).to.be.revertedWithCustomError(inventory, "BatchIsQuarantined");
+      await expect(supply.connect(dist1).transferCustody(1, pharm.address, 1, "x")).to.be.revertedWithCustomError(supply, "BatchIsQuarantined");
+      // The manufacturer can't lift the regulator's hold.
+      await expect(inventory.connect(mfg).releaseQuarantine(1)).to.be.revertedWithCustomError(inventory, "NotAuthorisedToQuarantine");
+
+      // Confirmed: escalate to a recall. It can never be undone.
+      await inventory.connect(mfg).flagRecall(1, "Confirmed contamination");
+      expect((await registry.getBatchDetails(1)).status).to.equal(1);
+      await expect(inventory.connect(reg).releaseQuarantine(1)).to.be.revertedWithCustomError(inventory, "NotQuarantined");
+
+      // Clean-up: the pharmacy sends some back and destroys the rest; the
+      // distributor, revoked meanwhile, still returns everything it holds.
+      await supply.connect(pharm).returnToManufacturer(1, 200, "Recall return");
+      await inventory.connect(pharm).destroyStock(1, 280, "Incinerated on site");
+      await registry.revokeParticipant(dist1.address);
+      await supply.connect(dist1).returnToManufacturer(1, 3500, "Recall return");
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(6000 + 200 + 3500);
+
+      let progress = await inventory.getRecallProgress(1);
+      expect(progress.dispensed).to.equal(20);
+      expect(progress.destroyed).to.equal(280);
+      expect(progress.outstanding).to.equal(9700);
+
+      // The manufacturer destroys everything that came home.
+      await inventory.connect(mfg).destroyStock(1, 9700, "Destroyed under regulator supervision");
+      progress = await inventory.getRecallProgress(1);
+      expect(progress.produced).to.equal(10000);
+      expect(progress.outstanding).to.equal(0);
+      expect([...(await inventory.getAffectedHolders(1))]).to.deep.equal([]);
+      expect((await inventory.getDestructionLog(1)).length).to.equal(2);
+    });
+
+    it("a manufacturer's own quarantine can be released and stock flows again", async function () {
+      const { registry, supply, inventory, mfg, pharm } = await loadFixture(system);
+      await inventory.connect(mfg).quarantineBatch(1, "Retesting a sample");
+      await inventory.connect(mfg).releaseQuarantine(1);
+      expect((await registry.getBatchDetails(1)).status).to.equal(0);
+      await hop(supply, mfg, pharm, 10);
+      await inventory.connect(pharm).dispenseDrug(1, 1);
+    });
+  });
 });
