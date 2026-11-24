@@ -423,4 +423,162 @@ describe("InventoryManager", function () {
       ).to.not.emit(inv, "ExpiryWarning");
     });
   });
+
+  describe("v2: quarantine", function () {
+    const QUARANTINED = 2, ACTIVE = 0, RECALLED = 1;
+
+    it("the manufacturer can quarantine its batch, which blocks dispensing", async function () {
+      const { inv, registry, mfg, pharm } = await loadFixture(deployFixture);
+      await expect(inv.connect(mfg).quarantineBatch(1, "Odd test result"))
+        .to.emit(inv, "BatchQuarantined").withArgs(1, mfg.address, "Odd test result");
+      expect(await inv.isQuarantined(1)).to.equal(true);
+      expect(await registry.lastStatus(1)).to.equal(QUARANTINED);
+      await expect(inv.connect(pharm).dispenseDrug(1, 1))
+        .to.be.revertedWithCustomError(inv, "BatchIsQuarantined").withArgs(1);
+    });
+
+    it("dispensing works again once the quarantine is released", async function () {
+      const { inv, registry, mfg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(mfg).quarantineBatch(1, "check");
+      await expect(inv.connect(mfg).releaseQuarantine(1))
+        .to.emit(inv, "QuarantineReleased").withArgs(1, mfg.address);
+      expect(await inv.isQuarantined(1)).to.equal(false);
+      expect(await registry.lastStatus(1)).to.equal(ACTIVE);
+      await inv.connect(pharm).dispenseDrug(1, 1);
+    });
+
+    it("refuses quarantine from anyone but the active manufacturer or a regulator", async function () {
+      const { inv, registry, stranger, pharm } = await loadFixture(deployFixture);
+      await expect(inv.connect(stranger).quarantineBatch(1, "x"))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToQuarantine").withArgs(stranger.address);
+      await expect(inv.connect(pharm).quarantineBatch(1, "x"))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToQuarantine");
+
+      // The recorded manufacturer without the role (revoked) can't either.
+      const [, , , , , , , exMfg] = await ethers.getSigners();
+      await registry.setBatch(7, exMfg.address, (await time.latest()) + 100 * DAY);
+      await expect(inv.connect(exMfg).quarantineBatch(7, "x"))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToQuarantine");
+    });
+
+    it("refuses quarantining twice, or quarantining a recalled batch", async function () {
+      const { inv, mfg, reg } = await loadFixture(deployFixture);
+      await inv.connect(mfg).quarantineBatch(1, "x");
+      await expect(inv.connect(reg).quarantineBatch(1, "x"))
+        .to.be.revertedWithCustomError(inv, "AlreadyQuarantined").withArgs(1);
+
+      await inv.connect(reg).flagRecall(1, "confirmed");
+      await expect(inv.connect(reg).quarantineBatch(1, "x"))
+        .to.be.revertedWithCustomError(inv, "BatchIsRecalled").withArgs(1);
+    });
+
+    it("a manufacturer can't lift a quarantine a regulator imposed", async function () {
+      const { inv, mfg, reg } = await loadFixture(deployFixture);
+      await inv.connect(reg).quarantineBatch(1, "Regulator hold");
+      await expect(inv.connect(mfg).releaseQuarantine(1))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToQuarantine").withArgs(mfg.address);
+      await inv.connect(reg).releaseQuarantine(1);
+    });
+
+    it("a regulator can lift a manufacturer's quarantine; strangers can't lift any", async function () {
+      const { inv, mfg, reg, stranger } = await loadFixture(deployFixture);
+      await inv.connect(mfg).quarantineBatch(1, "x");
+      await expect(inv.connect(stranger).releaseQuarantine(1))
+        .to.be.revertedWithCustomError(inv, "NotAuthorisedToQuarantine");
+      await inv.connect(reg).releaseQuarantine(1);
+    });
+
+    it("refuses releasing a batch that isn't quarantined", async function () {
+      const { inv, reg } = await loadFixture(deployFixture);
+      await expect(inv.connect(reg).releaseQuarantine(1))
+        .to.be.revertedWithCustomError(inv, "NotQuarantined").withArgs(1);
+    });
+
+    it("a quarantine can be escalated to a recall, which clears it for good", async function () {
+      const { inv, registry, mfg, reg } = await loadFixture(deployFixture);
+      await inv.connect(reg).quarantineBatch(1, "x");
+      await inv.connect(mfg).flagRecall(1, "confirmed contamination");
+      expect(await inv.isQuarantined(1)).to.equal(false);
+      expect(await inv.isRecalled(1)).to.equal(true);
+      expect(await registry.lastStatus(1)).to.equal(RECALLED);
+      await expect(inv.connect(reg).releaseQuarantine(1))
+        .to.be.revertedWithCustomError(inv, "NotQuarantined");
+    });
+  });
+
+  describe("v2: destroying dead stock", function () {
+    it("refuses to destroy good stock", async function () {
+      const { inv, pharm } = await loadFixture(deployFixture);
+      await expect(inv.connect(pharm).destroyStock(1, 10, "x"))
+        .to.be.revertedWithCustomError(inv, "StockNotDisposable").withArgs(1);
+    });
+
+    it("refuses to destroy quarantined stock, which may yet be released", async function () {
+      const { inv, mfg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(mfg).quarantineBatch(1, "x");
+      await expect(inv.connect(pharm).destroyStock(1, 10, "x"))
+        .to.be.revertedWithCustomError(inv, "StockNotDisposable");
+    });
+
+    it("a holder can destroy recalled stock, and it is logged", async function () {
+      const { inv, reg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(reg).flagRecall(1, "bad");
+      await expect(inv.connect(pharm).destroyStock(1, 40, "Incinerated on site"))
+        .to.emit(inv, "StockDestroyed").withArgs(1, pharm.address, 40, "Incinerated on site");
+      expect(await inv.getFacilityStock(pharm.address, 1)).to.equal(60);
+      const log = await inv.getDestructionLog(1);
+      expect(log.length).to.equal(1);
+      expect(log[0].holder).to.equal(pharm.address);
+      expect(log[0].quantity).to.equal(40);
+      expect(log[0].reason).to.equal("Incinerated on site");
+    });
+
+    it("destroying a holder's last unit removes it from the affected holders", async function () {
+      const { inv, reg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(reg).flagRecall(1, "bad");
+      await inv.connect(pharm).destroyStock(1, 100, "x");
+      expect([...(await inv.getAffectedHolders(1))]).to.not.include(pharm.address);
+    });
+
+    it("expired stock can be destroyed even without a recall", async function () {
+      const { inv, pharm, expiry } = await loadFixture(deployFixture);
+      await time.increaseTo(expiry + 1);
+      await inv.connect(pharm).destroyStock(1, 100, "Expired");
+      expect(await inv.getFacilityStock(pharm.address, 1)).to.equal(0);
+    });
+
+    it("refuses zero, or more than the holder has", async function () {
+      const { inv, reg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(reg).flagRecall(1, "bad");
+      await expect(inv.connect(pharm).destroyStock(1, 0, "x"))
+        .to.be.revertedWithCustomError(inv, "ZeroQuantity");
+      await expect(inv.connect(pharm).destroyStock(1, 101, "x"))
+        .to.be.revertedWithCustomError(inv, "InsufficientStock")
+        .withArgs(1, pharm.address, 100, 101);
+    });
+
+    it("a write-off doesn't raise a low-stock alert", async function () {
+      const { inv, reg, pharm } = await loadFixture(deployFixture);
+      await inv.connect(pharm).setReorderThreshold(1, 90);
+      await inv.connect(reg).flagRecall(1, "bad");
+      await expect(inv.connect(pharm).destroyStock(1, 50, "x")).to.not.emit(inv, "LowStockAlert");
+    });
+  });
+
+  describe("v2: recall progress", function () {
+    it("accounts for every unit: dispensed + destroyed + outstanding = produced", async function () {
+      const { inv, registry, reg, pharm, mfg } = await loadFixture(deployFixture);
+      await registry.setQuantity(1, 1000);
+      await inv.connect(pharm).dispenseDrug(1, 30);
+      await inv.connect(reg).flagRecall(1, "bad");
+      await inv.connect(pharm).destroyStock(1, 70, "x");
+      await inv.connect(mfg).destroyStock(1, 500, "x");
+
+      const p = await inv.getRecallProgress(1);
+      expect(p.produced).to.equal(1000);
+      expect(p.dispensed).to.equal(30);
+      expect(p.destroyed).to.equal(570);
+      expect(p.outstanding).to.equal(400);
+    });
+  });
 });
