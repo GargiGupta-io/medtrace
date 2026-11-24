@@ -250,4 +250,22 @@ describe("Integration: full batch lifecycle", function () {
       expect(await registry.paused()).to.equal(true);
     });
   });
+
+  describe("v2: abandoned consignments", function () {
+    it("a consignment nobody answers for 30 days goes back, and escrow is empty again", async function () {
+      const { supply, inventory, mfg, pharm, stranger } = await loadFixture(system);
+      const escrow = await supply.getAddress();
+      await supply.connect(mfg).transferCustody(1, pharm.address, 250, "route");
+      expect([...(await inventory.getAffectedHolders(1))]).to.include(escrow);
+
+      await time.increase(30 * DAY);
+      await expect(supply.connect(pharm).acceptConsignment(1)).to.be.revertedWithCustomError(supply, "TransferHasLapsed");
+      await supply.connect(stranger).expireTransfer(1, pharm.address);
+
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(10000);
+      expect([...(await inventory.getAffectedHolders(1))]).to.not.include(escrow);
+      // The lapse isn't a handoff, so the trail still has only the manufacture record.
+      expect(await supply.getCustodyHistoryCount(1)).to.equal(1);
+    });
+  });
 });
