@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
+const { loadFixture, time } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
 const role = (s) => ethers.keccak256(ethers.toUtf8Bytes(s));
 const MANUFACTURER = role("MANUFACTURER_ROLE");
@@ -534,6 +534,106 @@ describe("SupplyChain", function () {
       await registry.setPaused(false);
       await sc.connect(mfg).transferCustody(1, dist.address, 10, "Plant");
       await sc.connect(dist).acceptConsignment(1);
+    });
+  });
+
+  describe("v2: consignment time-out", function () {
+    const TTL = 30 * 24 * 60 * 60;
+
+    it("exposes the 30-day TTL", async function () {
+      const { sc } = await loadFixture(deployFixture);
+      expect(await sc.TRANSFER_TTL()).to.equal(BigInt(TTL));
+    });
+
+    it("can still be accepted just before the TTL runs out", async function () {
+      const { sc, mfg, dist } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      const { initiatedAt } = await sc.getPendingTransfer(1, dist.address);
+      await time.setNextBlockTimestamp(Number(initiatedAt) + TTL - 1);
+      await sc.connect(dist).acceptConsignment(1);
+    });
+
+    it("can't be accepted once it has lapsed", async function () {
+      const { sc, mfg, dist } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      const { initiatedAt } = await sc.getPendingTransfer(1, dist.address);
+      const lapsesAt = Number(initiatedAt) + TTL;
+      await time.setNextBlockTimestamp(lapsesAt);
+      await expect(sc.connect(dist).acceptConsignment(1))
+        .to.be.revertedWithCustomError(sc, "TransferHasLapsed")
+        .withArgs(1, dist.address, lapsesAt);
+    });
+
+    it("anyone can send a lapsed consignment back to the sender", async function () {
+      const { sc, scAddr, inventory, mfg, dist, stranger } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      await time.increase(TTL);
+      await expect(sc.connect(stranger).expireTransfer(1, dist.address))
+        .to.emit(sc, "TransferLapsed")
+        .withArgs(1, mfg.address, dist.address, 100, stranger.address);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(1000n);
+      expect(await inventory.getFacilityStock(scAddr, 1)).to.equal(0n);
+      expect(await sc.hasPendingTransfer(1, dist.address)).to.equal(false);
+    });
+
+    it("refuses to expire a consignment early, or one that doesn't exist", async function () {
+      const { sc, mfg, dist, stranger } = await loadFixture(deployFixture);
+      await expect(sc.connect(stranger).expireTransfer(1, dist.address))
+        .to.be.revertedWithCustomError(sc, "NoPendingTransfer")
+        .withArgs(1, dist.address);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      const { initiatedAt } = await sc.getPendingTransfer(1, dist.address);
+      await expect(sc.connect(stranger).expireTransfer(1, dist.address))
+        .to.be.revertedWithCustomError(sc, "TransferNotLapsed")
+        .withArgs(1, dist.address, Number(initiatedAt) + TTL);
+    });
+
+    it("expiring works while paused, and frees the slot for a fresh dispatch", async function () {
+      const { sc, registry, mfg, dist } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      await time.increase(TTL);
+      await registry.setPaused(true);
+      await sc.expireTransfer(1, dist.address);
+      await registry.setPaused(false);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "Plant");
+      await sc.connect(dist).acceptConsignment(1);
+    });
+  });
+
+  describe("v2: paged custody trail", function () {
+    async function withLongTrail() {
+      const f = await deployFixture();
+      // Five accepted hops: trail = manufacture + 5 records.
+      for (let i = 0; i < 5; i++) {
+        await f.sc.connect(f.mfg).transferCustody(1, f.dist.address, 10 + i, `hop ${i}`);
+        await f.sc.connect(f.dist).acceptConsignment(1);
+      }
+      return f;
+    }
+
+    it("counts the trail and reads it in pages that match the full trail", async function () {
+      const { sc } = await loadFixture(withLongTrail);
+      expect(await sc.getCustodyHistoryCount(1)).to.equal(6n);
+      const full = [...(await sc.getCustodyHistory(1))].map((r) => r.quantity);
+      const pages = [
+        ...(await sc.getCustodyHistoryPage(1, 0, 4)),
+        ...(await sc.getCustodyHistoryPage(1, 4, 4)),
+      ].map((r) => r.quantity);
+      expect(pages).to.deep.equal(full);
+    });
+
+    it("clips the last page, and returns nothing past the end or for limit 0", async function () {
+      const { sc } = await loadFixture(withLongTrail);
+      expect((await sc.getCustodyHistoryPage(1, 4, 100)).length).to.equal(2);
+      expect((await sc.getCustodyHistoryPage(1, 6, 10)).length).to.equal(0);
+      expect((await sc.getCustodyHistoryPage(1, 99, 10)).length).to.equal(0);
+      expect((await sc.getCustodyHistoryPage(1, 0, 0)).length).to.equal(0);
+      expect((await sc.getCustodyHistoryPage(42, 0, 10)).length).to.equal(0);
+    });
+
+    it("doesn't overflow on a huge limit", async function () {
+      const { sc } = await loadFixture(withLongTrail);
+      expect((await sc.getCustodyHistoryPage(1, 1, ethers.MaxUint256)).length).to.equal(5);
     });
   });
 });
