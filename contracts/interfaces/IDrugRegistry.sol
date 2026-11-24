@@ -61,6 +61,10 @@ interface IDrugRegistry is IAccessControl {
         uint256 indexed batchId, address indexed manufacturer, string drugName, uint256 quantity, uint64 expiryDate
     );
     event BatchStatusChanged(uint256 indexed batchId, BatchStatus status);
+    event SystemPaused(address indexed by, string reason);
+    event SystemUnpaused(address indexed by);
+    event AdminProposed(address indexed account, address indexed proposedBy);
+    event AdminProposalCancelled(address indexed account);
 
     // ----------------------------------------------------------------- errors
 
@@ -74,9 +78,11 @@ interface IDrugRegistry is IAccessControl {
     error CallerNotInventory(address caller);
     error AddressAlreadySet();
     error ZeroAddress();
-    /// @dev Participant roles change only through registerParticipant,
-    ///      assignRole and revokeParticipant, so the role and the
-    ///      participant record can never disagree.
+    /// @dev No role can be granted with grantRole. Participant roles change
+    ///      only through registerParticipant, assignRole and revokeParticipant,
+    ///      so the role and the participant record can never disagree; admins
+    ///      are added with proposeAdmin + acceptAdmin. revokeRole and
+    ///      renounceRole work for the admin role only.
     error RoleManagedByRegistry(bytes32 role);
     /// @dev The last admin cannot be removed, or nobody could ever manage the network again.
     error LastAdmin();
@@ -86,6 +92,13 @@ interface IDrugRegistry is IAccessControl {
     error InvalidCid();
     /// @dev The status change isn't one of the allowed moves listed on BatchStatus.
     error InvalidStatusTransition(BatchStatus from, BatchStatus to);
+    /// @dev The network is paused: no new batches, transfers, acceptances or dispensing.
+    error Paused();
+    error NotPaused();
+    /// @dev Only an admin or a regulator can pause; only an admin can unpause.
+    error NotAuthorisedToPause(address caller);
+    /// @dev acceptAdmin was called by an account nobody proposed.
+    error NoAdminProposal(address account);
 
     // ------------------------------------------------------ participant admin
 
@@ -109,10 +122,47 @@ interface IDrugRegistry is IAccessControl {
     ///      Reverts: NotRegistered.
     function revokeParticipant(address account) external;
 
+    // ------------------------------------------------------------------ admins
+
+    /// @notice Invite `account` to become an admin. Admin only.
+    /// @dev Two steps so the admin role can never land on a mistyped or
+    ///      unreachable address: nothing is granted until `account` itself
+    ///      calls acceptAdmin. Proposing again simply re-invites.
+    ///      Reverts: ZeroAddress, AlreadyRegistered (already an admin).
+    function proposeAdmin(address account) external;
+
+    /// @notice Withdraw an admin invitation that hasn't been accepted. Admin only.
+    /// @dev Reverts: NoAdminProposal.
+    function cancelAdminProposal(address account) external;
+
+    /// @notice Accept an admin invitation. msg.sender is the invited account.
+    /// @dev Reverts: NoAdminProposal.
+    function acceptAdmin() external;
+
+    function isAdminProposed(address account) external view returns (bool);
+
+    // ------------------------------------------------------------------- pause
+
+    /// @notice Emergency stop. An admin or a regulator may pause.
+    /// @dev While paused: registerBatch, SupplyChain.transferCustody,
+    ///      SupplyChain.acceptConsignment and InventoryManager.dispenseDrug
+    ///      revert. Everything that makes stock SAFER keeps working: recall,
+    ///      quarantine, reject, cancel, return to manufacturer, destroy, and
+    ///      all participant management (so a compromised account can be revoked).
+    ///      Reverts: NotAuthorisedToPause, Paused (already paused).
+    function pause(string calldata reason) external;
+
+    /// @notice Resume normal operation. Admin only, so a regulator's stop
+    ///         can't be lifted by the regulator alone.
+    /// @dev Reverts: NotAuthorisedToPause, NotPaused.
+    function unpause() external;
+
+    function paused() external view returns (bool);
+
     // ---------------------------------------------------------------- batches
 
     /// @notice Register a new production batch. MANUFACTURER role only.
-    /// @dev Assigns the next batchId, stores the metadata, then calls
+    /// @dev Reverts Paused while the network is paused. Assigns the next batchId, stores the metadata, then calls
     ///      supplyChain.initialiseCustody(batchId, msg.sender, quantity)
     ///      so the manufacturer holds the full quantity immediately.
     ///      Reverts: ZeroQuantity, EmptyField (drugName or ipfsHash empty),
