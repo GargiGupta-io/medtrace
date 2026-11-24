@@ -12,6 +12,10 @@ contract MockRegistryForSupplyChain {
     mapping(address => bool) private registered;
     mapping(uint256 => address) private manufacturerOf;
 
+    bool public paused;
+
+    function setPaused(bool value) external { paused = value; }
+
     function setBatchManufacturer(uint256 batchId, address manufacturer) external {
         manufacturerOf[batchId] = manufacturer;
     }
