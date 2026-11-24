@@ -9,10 +9,10 @@ const MESSAGES = {
   InvalidDates: () => "The manufacture date must be set and not in the future, and expiry must come after it and be in the future.",
   FieldTooLong: () => "A field is too long. Names and licence IDs allow 64 characters, composition 256.",
   InvalidCid: () => "That certificate link isn't an IPFS CID. It should start with Qm or b.",
-  RoleManagedByRegistry: () => "Participant roles can only be changed from the admin's participant tools.",
+  RoleManagedByRegistry: () => "Roles can't be granted directly. Use the participant tools, or invite a new admin.",
   LastAdmin: () => "You can't remove the last admin. Add another admin first.",
   BatchNotFound: (a) => `Batch #${a[0]} doesn't exist. It may be forged.`,
-  AlreadyRegistered: () => "That address is already registered.",
+  AlreadyRegistered: () => "That address is already registered (or is already an admin).",
   NotRegistered: (a) => `${short(a[0])} isn't an active participant. If this is your consignment, ask the sender to cancel it.`,
   InvalidRole: () => "That isn't a valid participant role.",
   InvalidRoute: () => "That handoff isn't allowed. Stock only moves to a distributor or pharmacy.",
@@ -32,6 +32,10 @@ const MESSAGES = {
   NotAuthorisedToQuarantine: () => "Only the batch's manufacturer (while still active) or a regulator can place a hold. A hold placed by a regulator can only be lifted by a regulator.",
   StockNotDisposable: (a) => `Batch #${a[0]} is still good. Only recalled or expired stock can be destroyed.`,
   ReturnNotAllowed: (a) => `Batch #${a[0]} is still good, so it can't go back to the manufacturer. Returns are for recalled, on-hold or expired stock.`,
+  Paused: () => "The network is paused for an emergency. Recalls, holds, returns and write-offs still work; everything else waits until an admin resumes it.",
+  NotPaused: () => "The network isn't paused.",
+  NotAuthorisedToPause: () => "Only an admin or a regulator can pause the network, and only an admin can resume it.",
+  NoAdminProposal: () => "There's no admin invitation for that account.",
   InvalidStatusTransition: () => "That status change isn't allowed. A recall is final and can't be undone.",
 };
 
