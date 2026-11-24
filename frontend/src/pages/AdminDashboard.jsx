@@ -3,10 +3,11 @@ import { useNetworkLedger } from "../hooks/useLedger.js";
 import { ROLES, roleLabel } from "../lib/roles.js";
 import { Badge, Button, Card, Stat } from "../components/ui.jsx";
 import { ChangeRoleModal, RegisterParticipant, RevokeModal } from "../components/admin.jsx";
+import { InviteAdmin, PauseControl } from "../components/emergency.jsx";
 
-// The admin decides who may take part. Everything else (batches, transfers,
-// recalls) belongs to the participants, so this screen manages people only.
-export default function AdminDashboard({ wallet }) {
+// The admin decides who may take part, and holds the network's emergency
+// stop. Everything else (batches, transfers, recalls) belongs to the participants.
+export default function AdminDashboard({ wallet, pause }) {
   const ledger = useNetworkLedger(wallet);
   const [changing, setChanging] = useState(null);
   const [revoking, setRevoking] = useState(null);
@@ -78,7 +79,11 @@ export default function AdminDashboard({ wallet }) {
             </div>
           )}
         </Card>
-        <RegisterParticipant registry={registry} onDone={ledger.reload} />
+        <div className="space-y-6">
+          <RegisterParticipant registry={registry} onDone={ledger.reload} />
+          <PauseControl registry={registry} pause={pause} canResume />
+          <InviteAdmin registry={registry} />
+        </div>
       </div>
 
       {changing && <ChangeRoleModal participant={changing} registry={registry} onClose={() => setChanging(null)} onDone={ledger.reload} />}
