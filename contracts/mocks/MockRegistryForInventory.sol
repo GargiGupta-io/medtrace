@@ -10,6 +10,10 @@ contract MockRegistryForInventory {
     mapping(uint256 => IDrugRegistry.Batch) private batches;
     mapping(uint256 => IDrugRegistry.BatchStatus) public lastStatus;
 
+    bool public paused;
+
+    function setPaused(bool value) external { paused = value; }
+
     function setRole(bytes32 role, address account) external { roles[role][account] = true; }
 
     function setBatch(uint256 batchId, address manufacturer, uint64 expiryDate) external {
