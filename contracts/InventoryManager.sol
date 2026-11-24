@@ -324,6 +324,56 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         progress.outstanding = progress.produced - progress.dispensed - progress.destroyed;
     }
 
+    function getAffectedHoldersCount(
+        uint256 batchId
+    ) external view override returns (uint256) {
+        return holders[batchId].length;
+    }
+
+    function getAffectedHoldersPage(
+        uint256 batchId,
+        uint256 offset,
+        uint256 limit
+    ) external view override returns (address[] memory page) {
+        address[] storage list = holders[batchId];
+        (uint256 start, uint256 end) = _window(list.length, offset, limit);
+        page = new address[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            page[i - start] = list[i];
+        }
+    }
+
+    function getDispensingLogCount(
+        uint256 batchId
+    ) external view override returns (uint256) {
+        return dispensingLog[batchId].length;
+    }
+
+    function getDispensingLogPage(
+        uint256 batchId,
+        uint256 offset,
+        uint256 limit
+    ) external view override returns (DispenseRecord[] memory page) {
+        DispenseRecord[] storage log = dispensingLog[batchId];
+        (uint256 start, uint256 end) = _window(log.length, offset, limit);
+        page = new DispenseRecord[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            page[i - start] = log[i];
+        }
+    }
+
+    /// @dev The [start, end) slice of a list of `total` items for one page.
+    ///      Written so a huge `limit` can't overflow.
+    function _window(
+        uint256 total,
+        uint256 offset,
+        uint256 limit
+    ) private pure returns (uint256 start, uint256 end) {
+        if (offset >= total) return (total, total);
+        start = offset;
+        end = limit > total - offset ? total : offset + limit;
+    }
+
     function getReorderThreshold(
         address facility,
         uint256 batchId
