@@ -580,4 +580,69 @@ describe("DrugRegistry", function () {
       expect(await registry.isRegistered(mfg.address)).to.equal(false);
     });
   });
+
+  describe("v2: reinstatement", function () {
+    it("brings a revoked participant back with a role, keeping their record", async function () {
+      const { registry, dist } = await loadFixture(deployFixture);
+      await registry.revokeParticipant(dist.address);
+      await expect(registry.reinstateParticipant(dist.address, PHARMACY))
+        .to.emit(registry, "ParticipantReinstated")
+        .withArgs(dist.address, PHARMACY);
+
+      const p = await registry.getParticipant(dist.address);
+      expect([p.name, p.licenceId, p.role, p.active]).to.deep.equal(["MedDist", "DST-001", PHARMACY, true]);
+      expect(await registry.isRegistered(dist.address)).to.equal(true);
+      expect(await registry.hasRole(PHARMACY, dist.address)).to.equal(true);
+      expect(await registry.hasRole(DISTRIBUTOR, dist.address)).to.equal(false);
+      // ...and is an ordinary participant again: it can be revoked once more.
+      await expect(registry.revokeParticipant(dist.address)).to.emit(registry, "ParticipantRevoked");
+    });
+
+    it("reverts in order: never registered, still active, invalid role", async function () {
+      const { registry, dist, stranger } = await loadFixture(deployFixture);
+      await expect(registry.reinstateParticipant(stranger.address, role("NOPE")))
+        .to.be.revertedWithCustomError(registry, "NotRegistered")
+        .withArgs(stranger.address);
+      await expect(registry.reinstateParticipant(dist.address, role("NOPE")))
+        .to.be.revertedWithCustomError(registry, "AlreadyRegistered")
+        .withArgs(dist.address);
+      await registry.revokeParticipant(dist.address);
+      await expect(registry.reinstateParticipant(dist.address, ADMIN)).to.be.revertedWithCustomError(registry, "InvalidRole");
+    });
+
+    it("is admin only", async function () {
+      const { registry, mfg, dist } = await loadFixture(deployFixture);
+      await registry.revokeParticipant(dist.address);
+      await expect(registry.connect(mfg).reinstateParticipant(dist.address, DISTRIBUTOR))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount")
+        .withArgs(mfg.address, ADMIN);
+    });
+  });
+
+  describe("v2: cheap batch reads", function () {
+    it("getExpiry and getManufacturer match the full record", async function () {
+      const { registry, mfg, now } = await loadFixture(withBatchFixture);
+      const b = await registry.getBatchDetails(1);
+      expect(await registry.getExpiry(1)).to.equal(b.expiryDate);
+      expect(await registry.getExpiry(1)).to.equal(BigInt(now + 365 * DAY));
+      expect(await registry.getManufacturer(1)).to.equal(mfg.address);
+    });
+
+    it("both reject unknown batches", async function () {
+      const { registry } = await loadFixture(withBatchFixture);
+      for (const id of [0, 2]) {
+        await expect(registry.getExpiry(id)).to.be.revertedWithCustomError(registry, "BatchNotFound").withArgs(id);
+        await expect(registry.getManufacturer(id)).to.be.revertedWithCustomError(registry, "BatchNotFound").withArgs(id);
+      }
+    });
+  });
+
+  describe("v2: wiring events", function () {
+    it("announces each wired address", async function () {
+      const [admin, sc, inv] = await ethers.getSigners();
+      const registry = await ethers.deployContract("DrugRegistry", [admin.address]);
+      await expect(registry.setSupplyChain(sc.address)).to.emit(registry, "SupplyChainSet").withArgs(sc.address);
+      await expect(registry.setInventoryManager(inv.address)).to.emit(registry, "InventoryManagerSet").withArgs(inv.address);
+    });
+  });
 });
