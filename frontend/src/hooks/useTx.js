@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isError } from "ethers";
 import { explainError } from "../lib/errors.js";
 
@@ -71,8 +71,7 @@ export function useTx(onConfirmed) {
     [onConfirmed]
   );
 
-  // Stops showing a step the user has given up on. The transaction itself, if
-  // it was sent, still runs; the next reload of the ledger shows its effect.
+  // Clears the status line. Any transaction already sent still runs.
   const reset = useCallback(() => {
     runId.current++;
     clearTimeout(timer.current);
@@ -80,8 +79,5 @@ export function useTx(onConfirmed) {
   }, []);
 
   const busy = state.status === "wallet" || state.status === "mining";
-  // reset rides along on state so <TxStatus state={tx.state} /> can offer
-  // "stop waiting" without every caller passing it separately.
-  const withReset = useMemo(() => ({ ...state, reset }), [state, reset]);
-  return { state: withReset, run, reset, busy };
+  return { state, run, reset, busy };
 }
