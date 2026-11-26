@@ -105,7 +105,7 @@ describe("SupplyChain", function () {
 
       await expect(sc.connect(mfg).transferCustody(1, dist.address, 400, "Mumbai warehouse"))
         .to.emit(sc, "CustodyTransferInitiated")
-        .withArgs(1, mfg.address, dist.address, 400);
+        .withArgs(1, mfg.address, dist.address, 400, "Mumbai warehouse");
 
       // Units sit in escrow while in transit
       expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(600n);
@@ -360,7 +360,7 @@ describe("SupplyChain", function () {
 
       await expect(sc.connect(mfg).cancelTransfer(1, dist.address))
         .to.emit(sc, "TransferCancelled")
-        .withArgs(1, mfg.address, dist.address);
+        .withArgs(1, mfg.address, dist.address, 400);
 
       expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(1000n);
       expect(await inventory.getFacilityStock(scAddr, 1)).to.equal(0n);
@@ -634,6 +634,114 @@ describe("SupplyChain", function () {
     it("doesn't overflow on a huge limit", async function () {
       const { sc } = await loadFixture(withLongTrail);
       expect((await sc.getCustodyHistoryPage(1, 1, ethers.MaxUint256)).length).to.equal(5);
+    });
+  });
+
+  describe("v2: pending recipients", function () {
+    const recipients = async (sc) => [...(await sc.getPendingRecipients(1))];
+
+    it("lists each recipient while their consignment is open", async function () {
+      const { sc, mfg, dist, dist2, pharm } = await loadFixture(deployFixture);
+      expect(await recipients(sc)).to.deep.equal([]);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "a");
+      await sc.connect(mfg).transferCustody(1, dist2.address, 100, "b");
+      await sc.connect(mfg).transferCustody(1, pharm.address, 100, "c");
+      expect(await recipients(sc)).to.deep.equal([dist.address, dist2.address, pharm.address]);
+      expect(await sc.getPendingRecipientsCount(1)).to.equal(3n);
+    });
+
+    it("drops a recipient on accept, reject, cancel and lapse, keeping the rest", async function () {
+      const { sc, mfg, dist, dist2, pharm, stranger } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "a");
+      await sc.connect(mfg).transferCustody(1, dist2.address, 100, "b");
+      await sc.connect(mfg).transferCustody(1, pharm.address, 100, "c");
+
+      await sc.connect(dist).acceptConsignment(1); // first entry: last one moves into its slot
+      expect(await recipients(sc)).to.deep.equal([pharm.address, dist2.address]);
+      await sc.connect(dist2).rejectConsignment(1, "damaged");
+      expect(await recipients(sc)).to.deep.equal([pharm.address]);
+      await sc.connect(mfg).cancelTransfer(1, pharm.address);
+      expect(await recipients(sc)).to.deep.equal([]);
+
+      await sc.connect(mfg).transferCustody(1, pharm.address, 50, "d");
+      await time.increase(30 * 24 * 60 * 60);
+      await sc.connect(stranger).expireTransfer(1, pharm.address);
+      expect(await recipients(sc)).to.deep.equal([]);
+      expect(await sc.getPendingRecipientsCount(1)).to.equal(0n);
+    });
+
+    it("a recipient can be re-added after their consignment closes", async function () {
+      const { sc, mfg, dist } = await loadFixture(deployFixture);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "a");
+      await sc.connect(dist).acceptConsignment(1);
+      await sc.connect(mfg).transferCustody(1, dist.address, 100, "b");
+      expect(await recipients(sc)).to.deep.equal([dist.address]);
+    });
+  });
+
+  describe("v2: forceReturn", function () {
+    // The pharmacy holds 300 units, then the admin revokes it.
+    async function withStrandedStock() {
+      const f = await deployFixture();
+      await f.registry.setBatchManufacturer(1, f.mfg.address);
+      await f.sc.connect(f.mfg).transferCustody(1, f.pharm.address, 300, "Plant");
+      await f.sc.connect(f.pharm).acceptConsignment(1);
+      await f.registry.revoke(f.pharm.address, PHARMACY);
+      return f;
+    }
+
+    it("a regulator moves a revoked holder's units back to the manufacturer, on record", async function () {
+      const { sc, inventory, mfg, pharm, reg } = await loadFixture(withStrandedStock);
+      await expect(sc.connect(reg).forceReturn(1, pharm.address, 300, "Licence suspended"))
+        .to.emit(sc, "StockForceReturned")
+        .withArgs(1, pharm.address, mfg.address, 300, reg.address, "Licence suspended");
+
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(0n);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(1000n);
+      const trail = await sc.getCustodyHistory(1);
+      const last = trail[trail.length - 1];
+      expect([last.from, last.to, last.quantity, last.location]).to.deep.equal([pharm.address, mfg.address, 300n, "Licence suspended"]);
+    });
+
+    it("an admin can do it too, part of the stock at a time, even while paused", async function () {
+      const { sc, registry, inventory, admin, pharm } = await loadFixture(withStrandedStock);
+      await registry.setPaused(true);
+      await sc.connect(admin).forceReturn(1, pharm.address, 100, "first crate");
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(200n);
+    });
+
+    it("reverts in order: unauthorised, zero quantity, holder still active, self, insufficient", async function () {
+      const { sc, registry, mfg, dist, pharm, reg, stranger } = await loadFixture(withStrandedStock);
+      await expect(sc.connect(stranger).forceReturn(1, pharm.address, 0, "x"))
+        .to.be.revertedWithCustomError(sc, "NotAuthorisedToForceReturn")
+        .withArgs(stranger.address);
+      // A manufacturer or distributor can't seize stock either.
+      await expect(sc.connect(mfg).forceReturn(1, pharm.address, 1, "x")).to.be.revertedWithCustomError(sc, "NotAuthorisedToForceReturn");
+
+      await expect(sc.connect(reg).forceReturn(1, dist.address, 0, "x")).to.be.revertedWithCustomError(sc, "ZeroQuantity");
+      await expect(sc.connect(reg).forceReturn(1, dist.address, 1, "x"))
+        .to.be.revertedWithCustomError(sc, "HolderStillActive")
+        .withArgs(dist.address);
+      await expect(sc.connect(reg).forceReturn(1, await sc.getAddress(), 1, "x"))
+        .to.be.revertedWithCustomError(sc, "HolderStillActive")
+        .withArgs(await sc.getAddress());
+
+      await registry.revoke(mfg.address, MANUFACTURER);
+      await expect(sc.connect(reg).forceReturn(1, mfg.address, 1, "x")).to.be.revertedWithCustomError(sc, "SelfTransfer");
+
+      await expect(sc.connect(reg).forceReturn(1, pharm.address, 301, "x"))
+        .to.be.revertedWithCustomError(sc, "InsufficientStock")
+        .withArgs(1, 300, 301);
+    });
+  });
+
+  describe("v2: wiring event", function () {
+    it("setInventoryManager announces the address", async function () {
+      const [admin, other] = await ethers.getSigners();
+      const registry = await ethers.deployContract("MockRegistryForSupplyChain");
+      const sc = await ethers.deployContract("SupplyChain", [await registry.getAddress()]);
+      await registry.setParticipant(admin.address, ethers.ZeroHash);
+      await expect(sc.setInventoryManager(other.address)).to.emit(sc, "InventoryManagerSet").withArgs(other.address);
     });
   });
 });
