@@ -29,6 +29,11 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
     /// @dev Open transfers, keyed by batch and recipient. An entry exists when `from != address(0)`.
     mapping(uint256 => mapping(address => PendingTransfer)) private pending;
 
+    /// @dev Recipients with an open transfer, per batch, with 1-based slots for
+    ///      O(1) removal (swap with last, pop). Kept in step with `pending`.
+    mapping(uint256 => address[]) private pendingRecipients;
+    mapping(uint256 => mapping(address => uint256)) private pendingSlot;
+
     constructor(address registry_) {
         if (registry_ == address(0)) revert ZeroAddress();
         registry = IDrugRegistry(registry_);
@@ -42,6 +47,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (inventoryManager == address(0)) revert ZeroAddress();
         if (address(inventory) != address(0)) revert AddressAlreadySet();
         inventory = IInventoryManager(inventoryManager);
+        emit InventoryManagerSet(inventoryManager);
     }
 
     // --------------------------------------------------------------- transfers
@@ -59,7 +65,8 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
             initiatedAt: uint64(block.timestamp),
             location: location
         });
-        emit CustodyTransferInitiated(batchId, msg.sender, to, quantity);
+        _addRecipient(batchId, to);
+        emit CustodyTransferInitiated(batchId, msg.sender, to, quantity, location);
 
         // Interaction last: sender's units move into escrow (this contract).
         inventory.updateStock(batchId, msg.sender, address(this), quantity);
@@ -83,7 +90,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (!inventory.checkExpiry(batchId)) revert BatchIsExpired(batchId);
 
         // Delete before calling out, so a consignment can never be accepted twice.
-        delete pending[batchId][msg.sender];
+        _closePending(batchId, msg.sender);
         custodyTrail[batchId].push(
             TransferRecord({
                 from: p.from,
@@ -104,7 +111,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         if (p.from == address(0)) revert NoPendingTransfer(batchId, msg.sender);
 
         // No recall or expiry checks: returning stock must always work.
-        delete pending[batchId][msg.sender];
+        _closePending(batchId, msg.sender);
         emit TransferRejected(batchId, p.from, msg.sender, reason);
 
         inventory.updateStock(batchId, address(this), p.from, p.quantity);
@@ -116,8 +123,8 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         // Covers both "no such transfer" and "not yours to cancel".
         if (p.from != msg.sender) revert NoPendingTransfer(batchId, to);
 
-        delete pending[batchId][to];
-        emit TransferCancelled(batchId, msg.sender, to);
+        _closePending(batchId, to);
+        emit TransferCancelled(batchId, msg.sender, to, p.quantity);
 
         inventory.updateStock(batchId, address(this), msg.sender, p.quantity);
     }
@@ -129,7 +136,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         uint64 lapsesAt = p.initiatedAt + TRANSFER_TTL;
         if (block.timestamp < lapsesAt) revert TransferNotLapsed(batchId, to, lapsesAt);
 
-        delete pending[batchId][to];
+        _closePending(batchId, to);
         emit TransferLapsed(batchId, p.from, to, p.quantity, msg.sender);
 
         inventory.updateStock(batchId, address(this), p.from, p.quantity);
@@ -144,7 +151,7 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         bool dead = inventory.isRecalled(batchId) || inventory.isQuarantined(batchId) || !inventory.checkExpiry(batchId);
         if (!dead) revert ReturnNotAllowed(batchId);
 
-        address manufacturer = registry.getBatchDetails(batchId).manufacturer;
+        address manufacturer = registry.getManufacturer(batchId);
         if (msg.sender == manufacturer) revert SelfTransfer();
 
         uint256 available = inventory.getFacilityStock(msg.sender, batchId);
@@ -162,6 +169,39 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         emit StockReturned(batchId, msg.sender, manufacturer, quantity, reason);
 
         inventory.updateStock(batchId, msg.sender, manufacturer, quantity);
+    }
+
+    /// @inheritdoc ISupplyChain
+    function forceReturn(uint256 batchId, address holder, uint256 quantity, string calldata reason)
+        external
+        nonReentrant
+    {
+        if (!registry.hasRole(Roles.ADMIN, msg.sender) && !registry.hasRole(Roles.REGULATOR, msg.sender)) {
+            revert NotAuthorisedToForceReturn(msg.sender);
+        }
+        if (quantity == 0) revert ZeroQuantity();
+        // Only stock nobody can move any more: an active holder can ship or
+        // return it, and escrowed units already have their own exits.
+        if (holder == address(this) || registry.isRegistered(holder)) revert HolderStillActive(holder);
+
+        address manufacturer = registry.getManufacturer(batchId);
+        if (holder == manufacturer) revert SelfTransfer();
+
+        uint256 available = inventory.getFacilityStock(holder, batchId);
+        if (available < quantity) revert InsufficientStock(batchId, available, quantity);
+
+        custodyTrail[batchId].push(
+            TransferRecord({
+                from: holder,
+                to: manufacturer,
+                quantity: quantity,
+                timestamp: uint64(block.timestamp),
+                location: reason
+            })
+        );
+        emit StockForceReturned(batchId, holder, manufacturer, quantity, msg.sender, reason);
+
+        inventory.updateStock(batchId, holder, manufacturer, quantity);
     }
 
     /// @inheritdoc ISupplyChain
@@ -221,7 +261,35 @@ contract SupplyChain is ISupplyChain, ReentrancyGuard {
         return pending[batchId][to].from != address(0);
     }
 
+    /// @inheritdoc ISupplyChain
+    function getPendingRecipients(uint256 batchId) external view returns (address[] memory) {
+        return pendingRecipients[batchId];
+    }
+
+    /// @inheritdoc ISupplyChain
+    function getPendingRecipientsCount(uint256 batchId) external view returns (uint256) {
+        return pendingRecipients[batchId].length;
+    }
+
     // ---------------------------------------------------------------- internal
+
+    function _addRecipient(uint256 batchId, address to) private {
+        pendingRecipients[batchId].push(to);
+        pendingSlot[batchId][to] = pendingRecipients[batchId].length;
+    }
+
+    /// @dev Removes an open transfer and its recipient-list entry together.
+    function _closePending(uint256 batchId, address to) private {
+        delete pending[batchId][to];
+
+        address[] storage list = pendingRecipients[batchId];
+        uint256 slot = pendingSlot[batchId][to];
+        address last = list[list.length - 1];
+        list[slot - 1] = last;
+        pendingSlot[batchId][last] = slot;
+        list.pop();
+        delete pendingSlot[batchId][to];
+    }
 
     /// @dev Every pre-transfer rule, in the exact order the interface specifies.
     function validateTransfer(uint256 batchId, address from, address to, uint256 quantity) internal view {
