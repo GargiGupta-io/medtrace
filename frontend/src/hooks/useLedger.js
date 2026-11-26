@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { queryAll } from "../lib/contracts.js";
 import { isQuarantined, loadIncoming, loadOutgoing, loadParticipants } from "../lib/ledger.js";
+import { ROLES } from "../lib/roles.js";
 
 // Everything the manufacturer dashboard shows, read straight from the chain.
 // Reloads on every new block, so other people's actions appear without a refresh.
+// loadedAt changes on every reload, for views that fetch their own extra data.
 export function useManufacturerLedger(wallet) {
   const { contracts, deployment, address, provider } = wallet;
   const [data, setData] = useState({ loading: true, participants: {}, batches: [], inTransit: [] });
@@ -41,6 +43,7 @@ export function useManufacturerLedger(wallet) {
             ipfsHash: b.ipfsHash,
             stock,
             recalled,
+            manufacturer: address,
             quarantined: isQuarantined(b),
             holders: [...holders],
           };
@@ -48,7 +51,18 @@ export function useManufacturerLedger(wallet) {
       );
       batches.sort((a, b) => Number(b.id - a.id));
 
-      setData({ loading: false, participants, batches, inTransit, error: null });
+      // Who placed each current hold. A regulator's hold can only be lifted by a regulator.
+      await Promise.all(
+        batches
+          .filter((b) => b.quarantined)
+          .map(async (b) => {
+            const holds = await queryAll(inventory, inventory.filters.BatchQuarantined(b.id), from);
+            const last = holds.at(-1)?.args;
+            b.hold = last && { by: last.issuedBy, reason: last.reason, byRegulator: participants[last.issuedBy.toLowerCase()]?.role === ROLES.REGULATOR };
+          })
+      );
+
+      setData({ loading: false, participants, batches, inTransit, error: null, loadedAt: Date.now() });
     } catch (e) {
       setData((d) => ({ ...d, loading: false, error: e?.shortMessage || e?.message }));
     } finally {
@@ -130,7 +144,7 @@ export function useHolderLedger(wallet) {
       const holdings = rows.filter((r) => r.stock > 0n).sort((a, b) => Number(a.expiryDate - b.expiryDate));
       const dispensed = rows.flatMap((r) => r.dispensed).sort((a, b) => Number(b.timestamp - a.timestamp));
 
-      setData({ loading: false, participants, holdings, incoming, outgoing, dispensed, error: null });
+      setData({ loading: false, participants, holdings, incoming, outgoing, dispensed, error: null, loadedAt: Date.now() });
     } catch (e) {
       setData((d) => ({ ...d, loading: false, error: e?.shortMessage || e?.message }));
     } finally {
@@ -192,7 +206,7 @@ export function useNetworkLedger(wallet) {
         .map((e) => ({ batchId: e.args.batchId, by: e.args.issuedBy, reason: e.args.reason, timestamp: time[e.blockNumber] }))
         .sort((a, b) => b.timestamp - a.timestamp);
 
-      setData({ loading: false, participants, batches, recalls, error: null });
+      setData({ loading: false, participants, batches, recalls, error: null, loadedAt: Date.now() });
     } catch (e) {
       setData((d) => ({ ...d, loading: false, error: e?.shortMessage || e?.message }));
     } finally {
