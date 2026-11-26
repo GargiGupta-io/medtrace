@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTx } from "../hooks/useTx.js";
 import { units } from "../lib/format.js";
 import { Button, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
+import { isQuantity, quantityProblem } from "../lib/validate.js";
 
 // What happens to unsafe stock: a temporary hold while something is checked,
 // sending units back to the manufacturer, and writing off dead stock.
@@ -72,9 +73,8 @@ export function HoldModal({ batch, inventory, onClose, onDone }) {
 // wallet is never asked to sign a transaction that's bound to fail.
 function useQuantity(max) {
   const [value, setValue] = useState("");
-  const ok = /^\d+$/.test(value) && BigInt(value) > 0n && BigInt(value) <= max;
-  const hint = value && !ok ? `Enter a whole number from 1 to ${units(max)}.` : `You hold ${units(max)} units.`;
-  return { value, setValue, ok, hint };
+  const problem = quantityProblem(value, max);
+  return { value, setValue, ok: isQuantity(value, max), hint: problem ? <span className="text-rose-700">{problem}</span> : `You hold ${units(max)} units.` };
 }
 
 // Sends recalled, on-hold or expired units straight back to the manufacturer.
