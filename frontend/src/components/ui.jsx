@@ -1,3 +1,5 @@
+import { txLink } from "../lib/config.js";
+
 // Small shared building blocks, so every screen looks the same.
 
 export function Card({ title, subtitle, action, children, className = "" }) {
@@ -85,18 +87,34 @@ export function Modal({ title, onClose, children }) {
   );
 }
 
+// One transaction's progress. Slow steps explain what's going on but keep the
+// form locked: the first transaction can still go through, and unlocking would
+// invite a duplicate (two dispenses, say).
 export function TxStatus({ state }) {
   if (state.status === "idle") return null;
+  const link = txLink(state.chainId, state.hash);
   const view = {
-    wallet: ["slate", "Confirm in your wallet…"],
-    mining: ["teal", "Waiting for the block…"],
-    done: ["green", `Confirmed in block ${state.block}.`],
+    wallet: ["slate", state.slow ? "Still waiting for your wallet. Open MetaMask: the request may be behind another window. Reject it there to back out." : "Confirm in your wallet…"],
+    mining: [
+      "teal",
+      state.slow
+        ? "Still waiting for a block. The network may be busy. You can speed it up in MetaMask, or keep waiting: it's safe either way."
+        : "Waiting for the block…",
+    ],
+    done: ["green", `Confirmed in block ${state.block}.${state.spedUp ? " (You sped it up in your wallet.)" : ""}`],
     error: ["red", state.message],
   }[state.status];
   const tone = { slate: "bg-slate-50 text-slate-700", teal: "bg-teal-50 text-teal-800", green: "bg-emerald-50 text-emerald-800", red: "bg-rose-50 text-rose-800" }[view[0]];
   return (
-    <p className={`mt-3 rounded-lg px-3 py-2 text-sm ${tone}`} role="status">
-      <span className="font-medium">{state.label}:</span> {view[1]}
-    </p>
+    <div className={`mt-3 rounded-lg px-3 py-2 text-sm ${tone}`} role="status">
+      <p>
+        <span className="font-medium">{state.label}:</span> {view[1]}
+      </p>
+      {link && (
+        <a className="mt-1 inline-block text-xs underline" href={link} target="_blank" rel="noreferrer">
+          View on Etherscan
+        </a>
+      )}
+    </div>
   );
 }
