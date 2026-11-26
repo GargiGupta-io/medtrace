@@ -6,11 +6,12 @@ import { shortAddr, toDate, units } from "../lib/format.js";
 import { Badge, Button, Card, Modal, Stat, inputClass } from "../components/ui.jsx";
 import { RecallModal, TrailModal } from "../components/batch.jsx";
 import { PauseControl } from "../components/emergency.jsx";
+import { HoldModal, RecallProgress } from "../components/safety.jsx";
 
-const FILTERS = ["All", "Active", "Expiring", "Expired", "Recalled"];
+const FILTERS = ["All", "Active", "Expiring", "Expired", "On hold", "Recalled"];
 
 // The regulator sees the whole network: every batch, every holder, every
-// recall, and can recall any batch, not just their own.
+// recall, and can hold or recall any batch, not just their own.
 export default function RegulatorDashboard({ wallet, profile, pause }) {
   const ledger = useNetworkLedger(wallet);
   const [query, setQuery] = useState("");
@@ -18,6 +19,7 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
   const [recalling, setRecalling] = useState(null);
   const [tracing, setTracing] = useState(null);
   const [holding, setHolding] = useState(null);
+  const [holdFor, setHoldFor] = useState(null);
 
   const escrow = wallet.deployment.contracts.SupplyChain;
   const nameOf = useMemo(() => makeNameOf(ledger.participants, escrow), [ledger.participants, escrow]);
@@ -28,8 +30,9 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
       .map((b) => ({ ...b, status: batchStatus(b) }))
       .filter((b) => {
         if (filter === "Recalled" && !b.recalled) return false;
-        if (filter === "Expired" && (b.recalled || b.status.label !== "Expired")) return false;
-        if (filter === "Expiring" && b.status.tone !== "amber") return false;
+        if (filter === "Expired" && b.status.label !== "Expired") return false;
+        if (filter === "Expiring" && (b.quarantined || b.status.tone !== "amber")) return false;
+        if (filter === "On hold" && (b.recalled || !b.quarantined)) return false;
         if (filter === "Active" && b.status.tone !== "green") return false;
         if (!q) return true;
         return b.id.toString() === q || b.drugName.toLowerCase().includes(q) || nameOf(b.manufacturer).toLowerCase().includes(q);
@@ -52,23 +55,24 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
         <Stat label="Batches on the network" value={ledger.batches.length} />
         <Stat label="Active participants" value={active} />
         <Stat label="Recalls issued" value={ledger.recalls.length} />
-        <Stat label="Unsafe stock still held" value={attention.length} hint="Recalled or expired batches with units left" />
+        <Stat label="Unsafe stock still held" value={attention.length} hint="Recalled, on-hold or expired batches with units left" />
       </div>
 
       {ledger.error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Couldn't load the ledger: {ledger.error}</p>}
 
       {attention.length > 0 && (
-        <Card title="Needs follow-up" subtitle="Frozen on chain, but the physical units are still out there.">
+        <Card title="Needs follow-up" subtitle="Frozen on chain, but the physical units are still out there. Holders can send them back or write them off.">
           <ul className="divide-y divide-slate-100">
             {attention.map((b) => (
               <li key={b.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
-                <div>
+                <div className="min-w-0 flex-1 space-y-1.5">
                   <p className="font-medium">
-                    Batch #{b.id.toString()} · {b.drugName} <Badge tone="red">{batchStatus(b).label}</Badge>
+                    Batch #{b.id.toString()} · {b.drugName} <Badge tone={batchStatus(b).tone}>{batchStatus(b).label}</Badge>
                   </p>
                   <p className="text-xs text-slate-500">
                     {units(b.unitsOut)} units at {b.holdings.filter((h) => h.stock > 0n).map((h) => nameOf(h.address)).join(", ")}
                   </p>
+                  {b.recalled && <RecallProgress batchId={b.id} inventory={wallet.contracts.inventory} refreshKey={ledger.loadedAt} />}
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => setHolding(b)}>
                   Holders
@@ -133,6 +137,9 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
                         <Button size="sm" variant="secondary" onClick={() => setTracing(b)}>
                           Trail
                         </Button>
+                        <Button size="sm" variant="secondary" onClick={() => setHoldFor(b)} disabled={b.recalled}>
+                          {b.quarantined ? "Lift hold" : "Hold"}
+                        </Button>
                         <Button size="sm" variant="danger" onClick={() => setRecalling(b)} disabled={b.recalled}>
                           Recall
                         </Button>
@@ -155,13 +162,14 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
           ) : (
             <ul className="divide-y divide-slate-100">
               {ledger.recalls.map((r) => (
-                <li key={r.batchId} className="py-3 text-sm">
+                <li key={r.batchId} className="space-y-1.5 py-3 text-sm">
                   <p className="font-medium">
                     Batch #{r.batchId.toString()} · {ledger.batches.find((b) => b.id === r.batchId)?.drugName}
                   </p>
                   <p className="text-xs text-slate-500">
                     "{r.reason}" · by {nameOf(r.by)} · {toDate(r.timestamp)}
                   </p>
+                  <RecallProgress batchId={r.batchId} inventory={wallet.contracts.inventory} refreshKey={ledger.loadedAt} />
                 </li>
               ))}
             </ul>
@@ -186,6 +194,7 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
 
       {recalling && <RecallModal batch={recalling} inventory={wallet.contracts.inventory} nameOf={nameOf} onClose={() => setRecalling(null)} onDone={ledger.reload} />}
       {tracing && <TrailModal batch={tracing} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setTracing(null)} />}
+      {holdFor && <HoldModal batch={holdFor} inventory={wallet.contracts.inventory} onClose={() => setHoldFor(null)} onDone={ledger.reload} />}
       {holding && <HoldersModal batch={holding} nameOf={nameOf} onClose={() => setHolding(null)} />}
     </div>
   );
