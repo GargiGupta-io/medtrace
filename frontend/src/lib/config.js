@@ -19,7 +19,13 @@ export const LOCAL_RPC = "http://127.0.0.1:8545";
 
 export const NETWORKS = {
   [LOCAL_CHAIN_ID]: { name: "Local Hardhat", short: "Local" },
-  [SEPOLIA_CHAIN_ID]: { name: "Ethereum Sepolia", short: "Sepolia" },
+  [SEPOLIA_CHAIN_ID]: { name: "Ethereum Sepolia", short: "Sepolia", explorer: "https://sepolia.etherscan.io" },
+};
+
+// A link to a transaction on the network's block explorer, if it has one.
+export const txLink = (chainId, hash) => {
+  const base = NETWORKS[Number(chainId)]?.explorer;
+  return base && hash ? `${base}/tx/${hash}` : null;
 };
 
 export const hasLocalDeployment = Boolean(deployments[LOCAL_CHAIN_ID]);
