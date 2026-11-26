@@ -268,4 +268,42 @@ describe("Integration: full batch lifecycle", function () {
       expect(await supply.getCustodyHistoryCount(1)).to.equal(1);
     });
   });
+
+  describe("v2: recall reach and stranded stock", function () {
+    it("holders plus pending recipients name everyone to contact in a recall", async function () {
+      const { supply, inventory, mfg, dist1, dist2, pharm } = await loadFixture(system);
+      const escrow = await supply.getAddress();
+      await hop(supply, mfg, dist1, 1000);
+      await supply.connect(dist1).transferCustody(1, pharm.address, 200, "route"); // on the road
+      await supply.connect(mfg).transferCustody(1, dist2.address, 300, "route"); // on the road
+
+      const holders = [...(await inventory.getAffectedHolders(1))];
+      const pending = [...(await supply.getPendingRecipients(1))];
+      const toContact = [...holders.filter((h) => h !== escrow), ...pending];
+      expect(toContact).to.have.members([mfg.address, dist1.address, pharm.address, dist2.address]);
+    });
+
+    it("a revoked pharmacy's stock is recovered by the regulator; reinstated, it can trade again", async function () {
+      const { registry, supply, inventory, mfg, dist1, pharm, reg } = await loadFixture(system);
+      await hop(supply, mfg, dist1, 1000);
+      await hop(supply, dist1, pharm, 400);
+      await registry.revokeParticipant(pharm.address);
+
+      // The pharmacy can no longer move or dispense its 400 units...
+      await expect(inventory.connect(pharm).dispenseDrug(1, 1)).to.be.revertedWithCustomError(inventory, "NotPharmacy");
+      // ...so the regulator sends them home.
+      await supply.connect(reg).forceReturn(1, pharm.address, 400, "Licence suspended");
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(0);
+      expect(await inventory.getFacilityStock(mfg.address, 1)).to.equal(9400);
+      expect([...(await inventory.getAffectedHolders(1))]).to.not.include(pharm.address);
+      const trail = [...(await supply.getCustodyHistory(1))];
+      expect(trail.at(-1).location).to.equal("Licence suspended");
+
+      // Licence restored: the same account is back in business.
+      await registry.reinstateParticipant(pharm.address, role("PHARMACY_ROLE"));
+      await hop(supply, dist1, pharm, 100);
+      await inventory.connect(pharm).dispenseDrug(1, 10);
+      expect(await inventory.getFacilityStock(pharm.address, 1)).to.equal(90);
+    });
+  });
 });
