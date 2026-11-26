@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useHolderLedger } from "../hooks/useLedger.js";
-import { EXPIRY_WARNING_DAYS, makeNameOf } from "../lib/ledger.js";
+import { EXPIRY_WARNING_DAYS, isDisposable, makeNameOf } from "../lib/ledger.js";
 import { daysUntil, toDate, units } from "../lib/format.js";
 import { Button, Card, Stat } from "../components/ui.jsx";
+import { ReturnModal, WriteOffModal } from "../components/safety.jsx";
 import { IncomingConsignments, StockTable, TrailModal } from "../components/batch.jsx";
 import { DispenseModal, ReorderModal } from "../components/pharmacy.jsx";
 
@@ -13,13 +14,15 @@ export default function PharmacyDashboard({ wallet, profile }) {
   const [dispensing, setDispensing] = useState(null);
   const [reorder, setReorder] = useState(null);
   const [tracing, setTracing] = useState(null);
+  const [returning, setReturning] = useState(null);
+  const [writingOff, setWritingOff] = useState(null);
   const nameOf = makeNameOf(ledger.participants, wallet.deployment.contracts.SupplyChain);
 
   const alerts = useMemo(() => {
     const out = [];
     for (const b of ledger.holdings) {
       const days = daysUntil(b.expiryDate);
-      if (b.recalled) out.push({ b, tone: "red", text: `Recalled. Do not dispense. Return the ${units(b.stock)} units to the manufacturer.` });
+      if (b.recalled) out.push({ b, tone: "red", text: `Recalled. Do not dispense. Send the ${units(b.stock)} units back to the manufacturer, or write off any you destroy.` });
       else if (b.quarantined) out.push({ b, tone: "amber", text: `On hold while a problem is investigated. Don't dispense the ${units(b.stock)} units until the hold is lifted.` });
       else if (days <= 0) out.push({ b, tone: "red", text: `Expired on ${toDate(b.expiryDate)}. It can no longer be dispensed.` });
       else if (days <= EXPIRY_WARNING_DAYS) out.push({ b, tone: "amber", text: `Expires in ${days} days. Dispense it before newer stock.` });
@@ -70,7 +73,7 @@ export default function PharmacyDashboard({ wallet, profile }) {
 
       <IncomingConsignments items={ledger.incoming} nameOf={nameOf} supply={wallet.contracts.supply} onDone={ledger.reload} />
 
-      <Card title="Your shelf" subtitle="Soonest expiry first. Dispensing is refused for recalled, on-hold or expired batches.">
+      <Card title="Your shelf" subtitle="Soonest expiry first. Recalled, on-hold or expired batches can't be dispensed, only sent back or written off.">
         {ledger.loading ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : (
@@ -86,9 +89,22 @@ export default function PharmacyDashboard({ wallet, profile }) {
                 <Button size="sm" variant="secondary" onClick={() => setReorder(b)}>
                   Reorder level
                 </Button>
-                <Button size="sm" onClick={() => setDispensing(b)} disabled={status.frozen}>
-                  Dispense
-                </Button>
+                {status.frozen ? (
+                  <>
+                    <Button size="sm" variant="secondary" onClick={() => setReturning(b)}>
+                      Send back
+                    </Button>
+                    {isDisposable(b) && (
+                      <Button size="sm" variant="secondary" onClick={() => setWritingOff(b)}>
+                        Write off
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <Button size="sm" onClick={() => setDispensing(b)}>
+                    Dispense
+                  </Button>
+                )}
               </>
             )}
           />
@@ -117,6 +133,8 @@ export default function PharmacyDashboard({ wallet, profile }) {
       {dispensing && <DispenseModal batch={dispensing} inventory={wallet.contracts.inventory} onClose={() => setDispensing(null)} onDone={ledger.reload} />}
       {reorder && <ReorderModal batch={reorder} inventory={wallet.contracts.inventory} onClose={() => setReorder(null)} onDone={ledger.reload} />}
       {tracing && <TrailModal batch={tracing} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setTracing(null)} />}
+      {returning && <ReturnModal batch={returning} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setReturning(null)} onDone={ledger.reload} />}
+      {writingOff && <WriteOffModal batch={writingOff} inventory={wallet.contracts.inventory} onClose={() => setWritingOff(null)} onDone={ledger.reload} />}
     </div>
   );
 }
