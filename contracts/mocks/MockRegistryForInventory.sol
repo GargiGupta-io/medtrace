@@ -31,6 +31,18 @@ contract MockRegistryForInventory {
         return batches[batchId];
     }
 
+    function getExpiry(uint256 batchId) external view returns (uint64) {
+        if (batches[batchId].batchId == 0) revert IDrugRegistry.BatchNotFound(batchId);
+        return batches[batchId].expiryDate;
+    }
+
+    function getManufacturer(uint256 batchId) external view returns (address) {
+        if (batches[batchId].batchId == 0) revert IDrugRegistry.BatchNotFound(batchId);
+        return batches[batchId].manufacturer;
+    }
+
+    function batchExists(uint256 batchId) external view returns (bool) { return batches[batchId].batchId != 0; }
+
     function setBatchStatus(uint256 batchId, IDrugRegistry.BatchStatus status) external {
         lastStatus[batchId] = status;
     }
