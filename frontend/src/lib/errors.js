@@ -51,8 +51,22 @@ function findRevertData(err) {
   return null;
 }
 
+// Failures that come from the wallet or the network rather than a contract rule.
+const WALLET_AND_NETWORK = {
+  INSUFFICIENT_FUNDS: () => "This wallet doesn't have enough ETH to pay the network fee. On Sepolia, get free test ETH from a faucet.",
+  NONCE_EXPIRED: () => "Your wallet tried to reuse an old transaction slot. Reset the account's activity in MetaMask (Settings → Advanced → Clear activity) and try again.",
+  REPLACEMENT_UNDERPRICED: () => "A transaction is already pending from this wallet. Wait for it, or speed it up in MetaMask.",
+  NETWORK_ERROR: () => "Lost contact with the network. Check your connection. If the transaction was sent, it may still confirm: the dashboard updates when it does.",
+  TIMEOUT: () => "The network didn't answer in time. If the transaction was sent, it may still confirm: the dashboard updates when it does.",
+  TRANSACTION_REPLACED: (err) =>
+    err.cancelled
+      ? "You cancelled this in your wallet (or sent something else in its place), so it never happened."
+      : "You sped this up in your wallet, but the faster copy was rejected by the contract.",
+};
+
 export function explainError(err) {
   if (err?.code === "ACTION_REJECTED" || err?.info?.error?.code === 4001) return "You cancelled it in your wallet.";
+  if (err?.code === "TRANSACTION_REPLACED") return WALLET_AND_NETWORK.TRANSACTION_REPLACED(err);
   const data = findRevertData(err);
   if (data) {
     try {
@@ -63,5 +77,7 @@ export function explainError(err) {
     }
   }
   if (err?.revert?.name) return (MESSAGES[err.revert.name] ?? (() => `Rejected: ${err.revert.name}.`))(err.revert.args);
+  if (WALLET_AND_NETWORK[err?.code]) return WALLET_AND_NETWORK[err.code](err);
+  if (/insufficient funds/i.test(err?.info?.error?.message ?? err?.message ?? "")) return WALLET_AND_NETWORK.INSUFFICIENT_FUNDS();
   return err?.shortMessage || err?.message || "Something went wrong.";
 }
