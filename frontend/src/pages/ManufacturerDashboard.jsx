@@ -7,6 +7,7 @@ import { Badge, Button, Card, Field, Stat, TxStatus, inputClass } from "../compo
 import { DispatchModal, InTransit, RecallModal, TrailModal } from "../components/batch.jsx";
 import { QrModal } from "../components/qr.jsx";
 import CertificateField from "../components/CertificateField.jsx";
+import { MAX_COMPOSITION_BYTES, MAX_NAME_BYTES, cidProblem, datesProblem, isCid, quantityProblem, textProblem } from "../lib/validate.js";
 import { HoldModal, RecallProgress, WriteOffModal } from "../components/safety.jsx";
 
 export default function ManufacturerDashboard({ wallet, profile }) {
@@ -103,15 +104,27 @@ function RegisterBatch({ registry, onDone }) {
   });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
+  const problems = {
+    drugName: textProblem(form.drugName, MAX_NAME_BYTES),
+    composition: textProblem(form.composition, MAX_COMPOSITION_BYTES),
+    dates: datesProblem(form.mfgDate, form.expiryDate, todayInput()),
+    quantity: quantityProblem(form.quantity),
+    ipfsHash: cidProblem(form.ipfsHash),
+  };
+  const ready =
+    form.drugName.trim() && form.mfgDate && form.expiryDate && form.quantity && isCid(form.ipfsHash.trim()) && Object.values(problems).every((p) => !p);
+  const err = (p) => p && <span className="text-rose-700">{p}</span>;
+
   const submit = (e) => {
     e.preventDefault();
+    if (!ready) return;
     tx.run("Register batch", () =>
       registry.registerBatch(
         form.drugName.trim(),
         form.composition.trim(),
         dateInputToSeconds(form.mfgDate),
         dateInputToSeconds(form.expiryDate),
-        BigInt(form.quantity || 0),
+        BigInt(form.quantity),
         form.ipfsHash.trim()
       )
     );
@@ -120,25 +133,27 @@ function RegisterBatch({ registry, onDone }) {
   return (
     <Card title="Register a batch" subtitle="Gives the batch its permanent on-chain identity.">
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Drug name">
+        <Field label="Drug name" hint={err(problems.drugName)}>
           <input className={inputClass} value={form.drugName} onChange={set("drugName")} placeholder="Paracetamol 500mg" required />
         </Field>
-        <Field label="Composition">
+        <Field label="Composition" hint={err(problems.composition)}>
           <input className={inputClass} value={form.composition} onChange={set("composition")} placeholder="Paracetamol IP 500 mg" />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Manufactured">
-            <input type="date" className={inputClass} value={form.mfgDate} onChange={set("mfgDate")} required />
+            <input type="date" className={inputClass} value={form.mfgDate} max={todayInput()} onChange={set("mfgDate")} required />
           </Field>
           <Field label="Expires">
             <input type="date" className={inputClass} value={form.expiryDate} min={todayInput()} onChange={set("expiryDate")} required />
           </Field>
         </div>
-        <Field label="Quantity (units)">
+        {problems.dates && <p className="-mt-2 text-xs text-rose-700">{problems.dates}</p>}
+        <Field label="Quantity (units)" hint={err(problems.quantity)}>
           <input type="number" min="1" step="1" className={inputClass} value={form.quantity} onChange={set("quantity")} placeholder="10000" required />
         </Field>
         <CertificateField value={form.ipfsHash} onChange={(cid) => setForm((f) => ({ ...f, ipfsHash: cid }))} />
-        <Button type="submit" disabled={tx.busy || !form.ipfsHash.trim()} className="w-full">
+        {!form.ipfsHash && <p className="-mt-2 text-xs text-slate-500">Upload the certificate, or paste its CID, to register the batch.</p>}
+        <Button type="submit" disabled={tx.busy || !ready} className="w-full">
           {tx.busy ? "Registering…" : "Register batch"}
         </Button>
         <TxStatus state={tx.state} />
