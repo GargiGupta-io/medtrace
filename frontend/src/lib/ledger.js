@@ -1,4 +1,4 @@
-import { queryAll } from "./contracts.js";
+import { queryAll, readMany } from "./contracts.js";
 import { daysUntil, shortAddr } from "./format.js";
 
 export const EXPIRY_WARNING_DAYS = 30;
@@ -17,7 +17,7 @@ export const isQuarantined = (b) => Number(b.status) === BATCH_STATUS.Quarantine
 export async function loadParticipants(registry, fromBlock) {
   const joined = await queryAll(registry, registry.filters.ParticipantRegistered(), fromBlock);
   const accounts = [...new Set(joined.map((e) => e.args.account))];
-  const records = await Promise.all(accounts.map((a) => registry.getParticipant(a)));
+  const records = await readMany(accounts.map((a) => [registry, "getParticipant", a]));
   const directory = {};
   records.forEach((p, i) => {
     directory[accounts[i].toLowerCase()] = { address: accounts[i], name: p.name, licenceId: p.licenceId, role: p.role, active: p.active };
@@ -29,12 +29,10 @@ export async function loadParticipants(registry, fromBlock) {
 async function loadPending(supply, filter, fromBlock) {
   const events = await queryAll(supply, filter, fromBlock);
   const pairs = [...new Map(events.map((e) => [`${e.args.batchId}-${e.args.to}`, e.args])).values()];
-  const open = await Promise.all(
-    pairs.map(async ({ batchId, to }) =>
-      (await supply.hasPendingTransfer(batchId, to)) ? { batchId, to, ...(await supply.getPendingTransfer(batchId, to)).toObject() } : null
-    )
-  );
-  return open.filter(Boolean);
+  const pending = await readMany(pairs.map(({ batchId, to }) => [supply, "hasPendingTransfer", batchId, to]));
+  const open = pairs.filter((_, i) => pending[i]);
+  const details = await readMany(open.map(({ batchId, to }) => [supply, "getPendingTransfer", batchId, to]));
+  return open.map(({ batchId, to }, i) => ({ batchId, to, ...details[i].toObject() }));
 }
 
 // Consignments I dispatched that nobody has accepted, rejected or cancelled yet.
