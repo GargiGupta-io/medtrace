@@ -9,6 +9,9 @@ pragma solidity ^0.8.24;
 ///      Implement as:
 ///        contract InventoryManager is IInventoryManager, ReentrancyGuard
 ///        constructor(address registry, address supplyChain)
+///      Both addresses are immutable and checked non-zero (ZeroAddress). There
+///      is no upgrade path: a fix means redeploying all three contracts and
+///      pointing the app at the new deployment manifest.
 ///
 ///      This contract is the stock LEDGER. updateStock() does bookkeeping
 ///      only. Transfer policy (routes, expiry, recall) belongs to SupplyChain,
@@ -50,11 +53,13 @@ interface IInventoryManager {
     event DrugDispensed(uint256 indexed batchId, address indexed pharmacy, uint256 quantity);
     event BatchRecalled(uint256 indexed batchId, address indexed issuedBy, string reason);
     event LowStockAlert(uint256 indexed batchId, address indexed facility, uint256 remaining, uint256 threshold);
-    /// @dev Emitted by dispenseDrug and updateStock when the batch is within
-    ///      30 days of expiry. (View functions can't emit, so checkExpiry can't.)
+    /// @dev Emitted once per batch, by the first dispenseDrug or updateStock
+    ///      that happens within 30 days of expiry. (View functions can't emit,
+    ///      so checkExpiry can't.)
     event ExpiryWarning(uint256 indexed batchId, uint64 expiryDate);
     event BatchQuarantined(uint256 indexed batchId, address indexed issuedBy, string reason);
     event QuarantineReleased(uint256 indexed batchId, address indexed releasedBy);
+    event ReorderThresholdSet(uint256 indexed batchId, address indexed facility, uint256 threshold);
     event StockDestroyed(uint256 indexed batchId, address indexed holder, uint256 quantity, string reason);
 
     // ----------------------------------------------------------------- errors
@@ -67,6 +72,8 @@ interface IInventoryManager {
     error BatchIsRecalled(uint256 batchId);
     error AlreadyRecalled(uint256 batchId);
     error ZeroQuantity();
+    error ZeroAddress();
+    error BatchNotFound(uint256 batchId);
     error BatchIsQuarantined(uint256 batchId);
     error AlreadyQuarantined(uint256 batchId);
     error NotQuarantined(uint256 batchId);
@@ -130,6 +137,7 @@ interface IInventoryManager {
     function destroyStock(uint256 batchId, uint256 quantity, string calldata reason) external;
 
     /// @notice Set the low-stock level for msg.sender's own facility.
+    /// @dev Reverts BatchNotFound for an unknown batch. Emits ReorderThresholdSet.
     function setReorderThreshold(uint256 batchId, uint256 threshold) external;
 
     // ------------------------------------------------------------------ views
