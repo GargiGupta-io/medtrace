@@ -51,6 +51,17 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "holder",
+        "type": "address"
+      }
+    ],
+    "name": "HolderStillActive",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "uint256",
         "name": "batchId",
         "type": "uint256"
@@ -110,6 +121,17 @@
       }
     ],
     "name": "NotAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      }
+    ],
+    "name": "NotAuthorisedToForceReturn",
     "type": "error"
   },
   {
@@ -294,9 +316,71 @@
         "internalType": "uint256",
         "name": "quantity",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "location",
+        "type": "string"
       }
     ],
     "name": "CustodyTransferInitiated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "inventoryManager",
+        "type": "address"
+      }
+    ],
+    "name": "InventoryManagerSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "batchId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "holder",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "manufacturer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "quantity",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "by",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "reason",
+        "type": "string"
+      }
+    ],
+    "name": "StockForceReturned",
     "type": "event"
   },
   {
@@ -356,6 +440,12 @@
         "internalType": "address",
         "name": "to",
         "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "quantity",
+        "type": "uint256"
       }
     ],
     "name": "TransferCancelled",
@@ -497,6 +587,34 @@
         "internalType": "uint256",
         "name": "batchId",
         "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "holder",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "quantity",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "reason",
+        "type": "string"
+      }
+    ],
+    "name": "forceReturn",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "batchId",
+        "type": "uint256"
       }
     ],
     "name": "getCustodyHistory",
@@ -607,6 +725,44 @@
         "internalType": "struct ISupplyChain.TransferRecord[]",
         "name": "",
         "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "batchId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getPendingRecipients",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "batchId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getPendingRecipientsCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
