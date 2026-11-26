@@ -65,6 +65,9 @@ interface IDrugRegistry is IAccessControl {
     event SystemUnpaused(address indexed by);
     event AdminProposed(address indexed account, address indexed proposedBy);
     event AdminProposalCancelled(address indexed account);
+    event ParticipantReinstated(address indexed account, bytes32 indexed role);
+    event SupplyChainSet(address supplyChain);
+    event InventoryManagerSet(address inventoryManager);
 
     // ----------------------------------------------------------------- errors
 
@@ -121,6 +124,12 @@ interface IDrugRegistry is IAccessControl {
     ///      transactions stay on chain untouched.
     ///      Reverts: NotRegistered.
     function revokeParticipant(address account) external;
+
+    /// @notice Bring a revoked participant back, with `role`. Admin only.
+    /// @dev Keeps their name and licence ID, and everything they did before.
+    ///      Reverts in order: NotRegistered (never registered), AlreadyRegistered
+    ///      (still active), InvalidRole.
+    function reinstateParticipant(address account, bytes32 role) external;
 
     // ------------------------------------------------------------------ admins
 
@@ -190,6 +199,15 @@ interface IDrugRegistry is IAccessControl {
     /// @dev Reverts BatchNotFound for an unknown ID. The public verification
     ///      portal relies on this to flag forged batch IDs.
     function getBatchDetails(uint256 batchId) external view returns (Batch memory);
+
+    /// @notice Just the expiry date, for the hot paths in the other contracts:
+    ///         far cheaper than copying the whole Batch with its strings.
+    /// @dev Reverts BatchNotFound.
+    function getExpiry(uint256 batchId) external view returns (uint64);
+
+    /// @notice Just the manufacturer, for the same reason as getExpiry.
+    /// @dev Reverts BatchNotFound.
+    function getManufacturer(uint256 batchId) external view returns (address);
 
     function getParticipant(address account) external view returns (Participant memory);
 
