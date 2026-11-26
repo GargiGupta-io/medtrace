@@ -40,12 +40,14 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
         if (supplyChain_ == address(0)) revert ZeroAddress();
         if (address(supplyChain) != address(0)) revert AddressAlreadySet();
         supplyChain = ISupplyChain(supplyChain_);
+        emit SupplyChainSet(supplyChain_);
     }
 
     function setInventoryManager(address inventoryManager_) external onlyRole(Roles.ADMIN) {
         if (inventoryManager_ == address(0)) revert ZeroAddress();
         if (inventoryManager != address(0)) revert AddressAlreadySet();
         inventoryManager = inventoryManager_;
+        emit InventoryManagerSet(inventoryManager_);
     }
 
     // ------------------------------------------------------ participant admin
@@ -83,6 +85,20 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
         p.active = false;
         _revokeRole(p.role, account);
         emit ParticipantRevoked(account);
+    }
+
+    /// @dev A revoked participant keeps its record with active = false and its
+    ///      last role, so "never registered" is role == 0.
+    function reinstateParticipant(address account, bytes32 role) external onlyRole(Roles.ADMIN) {
+        Participant storage p = participants[account];
+        if (p.role == bytes32(0)) revert NotRegistered(account);
+        if (p.active) revert AlreadyRegistered(account);
+        if (!_isParticipantRole(role)) revert InvalidRole(role);
+
+        p.active = true;
+        p.role = role;
+        _grantRole(role, account);
+        emit ParticipantReinstated(account, role);
     }
 
     // ---------------------------------------------------------------- batches
@@ -218,6 +234,16 @@ contract DrugRegistry is IDrugRegistry, AccessControl, ReentrancyGuard {
     function getBatchDetails(uint256 batchId) external view returns (Batch memory) {
         if (!batchExists(batchId)) revert BatchNotFound(batchId);
         return batches[batchId];
+    }
+
+    function getExpiry(uint256 batchId) external view returns (uint64) {
+        if (!batchExists(batchId)) revert BatchNotFound(batchId);
+        return batches[batchId].expiryDate;
+    }
+
+    function getManufacturer(uint256 batchId) external view returns (address) {
+        if (!batchExists(batchId)) revert BatchNotFound(batchId);
+        return batches[batchId].manufacturer;
     }
 
     function getParticipant(address account) external view returns (Participant memory) {
