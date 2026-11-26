@@ -5,8 +5,6 @@ pragma solidity ^0.8.24;
 // Each has only the functions SupplyChain calls, plus setters so a test
 // can put the world into whatever state it needs.
 
-import {IDrugRegistry} from "../interfaces/IDrugRegistry.sol";
-
 contract MockRegistryForSupplyChain {
     mapping(bytes32 => mapping(address => bool)) private roles;
     mapping(address => bool) private registered;
@@ -20,14 +18,19 @@ contract MockRegistryForSupplyChain {
         manufacturerOf[batchId] = manufacturer;
     }
 
-    function getBatchDetails(uint256 batchId) external view returns (IDrugRegistry.Batch memory b) {
-        b.batchId = batchId;
-        b.manufacturer = manufacturerOf[batchId];
+    function getManufacturer(uint256 batchId) external view returns (address) {
+        return manufacturerOf[batchId];
     }
 
     function setParticipant(address account, bytes32 role) external {
         roles[role][account] = true;
         registered[account] = true;
+    }
+
+    /// @dev Revocation as the real registry does it: inactive, role gone.
+    function revoke(address account, bytes32 role) external {
+        roles[role][account] = false;
+        registered[account] = false;
     }
 
     function hasRole(bytes32 role, address account) external view returns (bool) {
