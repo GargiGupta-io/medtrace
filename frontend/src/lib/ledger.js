@@ -54,6 +54,10 @@ export function makeNameOf(participants, escrowAddress) {
   };
 }
 
+// Only dead stock can be written off: recalled, or past its expiry date.
+// Stock on hold may yet be released, so it can only be sent back.
+export const isDisposable = (b) => b.recalled || daysUntil(b.expiryDate) <= 0;
+
 export function batchStatus({ recalled, quarantined, expiryDate }) {
   if (recalled) return { tone: "red", label: "Recalled", frozen: true };
   if (quarantined) return { tone: "amber", label: "On hold", frozen: true };
