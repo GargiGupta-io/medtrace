@@ -3,6 +3,7 @@ import { useTx } from "../hooks/useTx.js";
 import { daysUntil, units } from "../lib/format.js";
 import { EXPIRY_WARNING_DAYS } from "../lib/ledger.js";
 import { Button, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
+import { isQuantity, quantityProblem } from "../lib/validate.js";
 
 // Giving medicine to a patient. The contract itself refuses expired or
 // recalled stock here; the app only explains the refusal.
@@ -34,7 +35,8 @@ export function DispenseModal({ batch, inventory, onClose, onDone }) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            tx.run("Dispense", () => inventory.dispenseDrug(batch.id, BigInt(quantity || 0)));
+            if (!isQuantity(quantity, batch.stock)) return;
+            tx.run("Dispense", () => inventory.dispenseDrug(batch.id, BigInt(quantity)));
           }}
           className="space-y-4"
         >
@@ -44,14 +46,14 @@ export function DispenseModal({ batch, inventory, onClose, onDone }) {
           {days > 0 && days <= EXPIRY_WARNING_DAYS && (
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">This batch expires in {days} days. Dispense it before newer stock.</p>
           )}
-          <Field label="Units to dispense">
+          <Field label="Units to dispense" hint={quantityProblem(quantity, batch.stock) && <span className="text-rose-700">{quantityProblem(quantity, batch.stock)}</span>}>
             <input type="number" min="1" max={batch.stock.toString()} step="1" className={inputClass} value={quantity} onChange={(e) => setQuantity(e.target.value)} required autoFocus />
           </Field>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={tx.busy}>
+            <Button type="submit" disabled={tx.busy || !isQuantity(quantity, batch.stock)}>
               {tx.busy ? "Dispensing…" : "Dispense"}
             </Button>
           </div>
@@ -74,7 +76,8 @@ export function ReorderModal({ batch, inventory, onClose, onDone }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          tx.run("Set reorder level", () => inventory.setReorderThreshold(batch.id, BigInt(level || 0)));
+          if (!/^\d+$/.test(level)) return;
+          tx.run("Set reorder level", () => inventory.setReorderThreshold(batch.id, BigInt(level)));
         }}
         className="space-y-4"
       >
@@ -86,7 +89,7 @@ export function ReorderModal({ batch, inventory, onClose, onDone }) {
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={tx.busy}>
+          <Button type="submit" disabled={tx.busy || !/^\d+$/.test(level)}>
             {tx.busy ? "Saving…" : "Save"}
           </Button>
         </div>
