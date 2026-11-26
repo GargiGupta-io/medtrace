@@ -4,6 +4,7 @@ import { useTx } from "../hooks/useTx.js";
 import { ROLES, roleLabel } from "../lib/roles.js";
 import { shortAddr } from "../lib/format.js";
 import { Button, Card, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
+import { MAX_NAME_BYTES, textProblem } from "../lib/validate.js";
 
 // The four roles the admin can hand out. ADMIN itself is never offered here:
 // new admins are invited (InviteAdmin) and must accept from their own wallet.
@@ -17,23 +18,28 @@ export function RegisterParticipant({ registry, onDone }) {
     onDone();
   });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const badAddress = form.address.trim() !== "" && !isAddress(form.address.trim());
+  const addr = form.address.trim();
+  const badAddress = addr !== "" && (!isAddress(addr) || /^0x0{40}$/i.test(addr));
+  const nameProblem = textProblem(form.name, MAX_NAME_BYTES);
+  const licenceProblem = textProblem(form.licenceId, MAX_NAME_BYTES);
+  const blocked = badAddress || nameProblem || licenceProblem || !form.name.trim() || !form.licenceId.trim();
 
   const submit = (e) => {
     e.preventDefault();
+    if (blocked) return;
     tx.run("Register participant", () => registry.registerParticipant(form.address.trim(), form.name.trim(), form.licenceId.trim(), form.role));
   };
 
   return (
     <Card title="Onboard a participant" subtitle="Only registered addresses can act on the ledger.">
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Wallet address" hint={badAddress ? "That isn't a valid Ethereum address." : "Their MetaMask address, starting 0x."}>
+        <Field label="Wallet address" hint={badAddress ? <span className="text-rose-700">That isn't a usable Ethereum address.</span> : "Their MetaMask address, starting 0x."}>
           <input className={inputClass} value={form.address} onChange={set("address")} placeholder="0x…" required />
         </Field>
-        <Field label="Organisation name">
+        <Field label="Organisation name" hint={nameProblem && <span className="text-rose-700">{nameProblem}</span>}>
           <input className={inputClass} value={form.name} onChange={set("name")} placeholder="Sun Pharma Ltd" required />
         </Field>
-        <Field label="Licence ID">
+        <Field label="Licence ID" hint={licenceProblem && <span className="text-rose-700">{licenceProblem}</span>}>
           <input className={inputClass} value={form.licenceId} onChange={set("licenceId")} placeholder="MFG-GJ-1102" required />
         </Field>
         <Field label="Role">
@@ -45,7 +51,7 @@ export function RegisterParticipant({ registry, onDone }) {
             ))}
           </select>
         </Field>
-        <Button type="submit" disabled={tx.busy || badAddress} className="w-full">
+        <Button type="submit" disabled={tx.busy || Boolean(blocked)} className="w-full">
           {tx.busy ? "Registering…" : "Register participant"}
         </Button>
         <TxStatus state={tx.state} />
