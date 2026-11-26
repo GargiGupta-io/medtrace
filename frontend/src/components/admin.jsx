@@ -111,8 +111,8 @@ export function RevokeModal({ participant, registry, onClose, onDone }) {
     <Modal title={`Revoke · ${participant.name}`} onClose={onClose}>
       <div className="space-y-4">
         <p className="text-sm text-slate-600">
-          {participant.name} ({shortAddr(participant.address)}) loses their role and can no longer register, send, accept or dispense anything. Their past transactions stay on the ledger. This{" "}
-          <span className="font-medium">can't be undone</span> from the app.
+          {participant.name} ({shortAddr(participant.address)}) loses their role and can no longer register, send, accept or dispense anything. Their past transactions stay on the ledger,
+          and you can reinstate them later. Any stock they hold stays with them until a regulator recovers it.
         </p>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -124,6 +124,49 @@ export function RevokeModal({ participant, registry, onClose, onDone }) {
         </div>
         <TxStatus state={tx.state} />
       </div>
+    </Modal>
+  );
+}
+
+// Brings a revoked participant back, keeping their name, licence and history.
+export function ReinstateModal({ participant, registry, onClose, onDone }) {
+  const [role, setRole] = useState(participant.role);
+  const tx = useTx(() => {
+    onDone();
+    setTimeout(onClose, 900);
+  });
+  return (
+    <Modal title={`Reinstate · ${participant.name}`} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          tx.run("Reinstate", () => registry.reinstateParticipant(participant.address, role));
+        }}
+        className="space-y-4"
+      >
+        <p className="text-sm text-slate-600">
+          {participant.name} ({shortAddr(participant.address)}, licence {participant.licenceId}) can act on the ledger again from the next block.
+        </p>
+        <Field label="Role">
+          <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value)}>
+            {ASSIGNABLE.map((r) => (
+              <option key={r} value={r}>
+                {roleLabel(r)}
+                {r === participant.role ? " (their role before)" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={tx.busy}>
+            {tx.busy ? "Reinstating…" : "Reinstate"}
+          </Button>
+        </div>
+        <TxStatus state={tx.state} />
+      </form>
     </Modal>
   );
 }
