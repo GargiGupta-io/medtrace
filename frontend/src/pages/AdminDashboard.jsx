@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNetworkLedger } from "../hooks/useLedger.js";
 import { ROLES, roleLabel } from "../lib/roles.js";
 import { Badge, Button, Card, Stat } from "../components/ui.jsx";
-import { ChangeRoleModal, RegisterParticipant, RevokeModal } from "../components/admin.jsx";
+import { ChangeRoleModal, RegisterParticipant, ReinstateModal, RevokeModal } from "../components/admin.jsx";
 import { InviteAdmin, PauseControl } from "../components/emergency.jsx";
 
 // The admin decides who may take part, and holds the network's emergency
@@ -11,6 +11,7 @@ export default function AdminDashboard({ wallet, pause }) {
   const ledger = useNetworkLedger(wallet);
   const [changing, setChanging] = useState(null);
   const [revoking, setRevoking] = useState(null);
+  const [reinstating, setReinstating] = useState(null);
   const registry = wallet.contracts.registry;
 
   const people = useMemo(
@@ -64,12 +65,20 @@ export default function AdminDashboard({ wallet, pause }) {
                       <td className="px-3 py-3">{p.active ? <Badge tone="teal">{roleLabel(p.role)}</Badge> : <Badge tone="slate">Revoked</Badge>}</td>
                       <td className="px-5 py-3">
                         <div className="flex justify-end gap-1.5">
-                          <Button size="sm" variant="secondary" className="whitespace-nowrap" disabled={!p.active} onClick={() => setChanging(p)}>
-                            Change role
-                          </Button>
-                          <Button size="sm" variant="danger" disabled={!p.active} onClick={() => setRevoking(p)}>
-                            Revoke
-                          </Button>
+                          {p.active ? (
+                            <>
+                              <Button size="sm" variant="secondary" className="whitespace-nowrap" onClick={() => setChanging(p)}>
+                                Change role
+                              </Button>
+                              <Button size="sm" variant="danger" onClick={() => setRevoking(p)}>
+                                Revoke
+                              </Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="secondary" onClick={() => setReinstating(p)}>
+                              Reinstate
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -87,6 +96,7 @@ export default function AdminDashboard({ wallet, pause }) {
       </div>
 
       {changing && <ChangeRoleModal participant={changing} registry={registry} onClose={() => setChanging(null)} onDone={ledger.reload} />}
+      {reinstating && <ReinstateModal participant={reinstating} registry={registry} onClose={() => setReinstating(null)} onDone={ledger.reload} />}
       {revoking && <RevokeModal participant={revoking} registry={registry} onClose={() => setRevoking(null)} onDone={ledger.reload} />}
     </div>
   );
