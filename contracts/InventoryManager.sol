@@ -1,5 +1,4 @@
-
- // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -26,8 +25,15 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
     mapping(uint256 => DestructionRecord[]) private destructionLog;
     mapping(uint256 => uint256) private totalDispensed;
     mapping(uint256 => uint256) private totalDestroyed;
+    /// @dev ExpiryWarning has already been emitted for this batch.
+    mapping(uint256 => bool) private expiryWarned;
 
+    /// @dev Both addresses are immutable, so a mistake here can only be fixed
+    ///      by redeploying; catch the obvious one now.
     constructor(address registry_, address supplyChain_) {
+        if (registry_ == address(0) || supplyChain_ == address(0)) {
+            revert ZeroAddress();
+        }
         registry = IDrugRegistry(registry_);
         supplyChain = supplyChain_;
     }
@@ -79,17 +85,24 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
     /// @dev The batch's original manufacturer, and only while it still holds
     ///      MANUFACTURER: a revoked manufacturer loses recall and quarantine powers.
     function _isOwnManufacturer(uint256 batchId) private view returns (bool) {
-        return msg.sender == registry.getBatchDetails(batchId).manufacturer &&
+        return msg.sender == registry.getManufacturer(batchId) &&
             registry.hasRole(Roles.MANUFACTURER, msg.sender);
     }
 
+    /// @dev Once per batch: the first move or dispense inside the window warns,
+    ///      later ones stay quiet instead of repeating the same news.
     function _maybeWarnExpiry(uint256 batchId) private {
-        uint64 expiryDate = registry.getBatchDetails(batchId).expiryDate;
+        if (expiryWarned[batchId]) {
+            return;
+        }
+
+        uint64 expiryDate = registry.getExpiry(batchId);
 
         if (
             block.timestamp < expiryDate &&
             expiryDate - block.timestamp <= EXPIRY_WARNING_WINDOW
         ) {
+            expiryWarned[batchId] = true;
             emit ExpiryWarning(batchId, expiryDate);
         }
     }
@@ -269,13 +282,18 @@ contract InventoryManager is IInventoryManager, ReentrancyGuard {
         uint256 batchId,
         uint256 threshold
     ) external override {
+        if (!registry.batchExists(batchId)) {
+            revert BatchNotFound(batchId);
+        }
+
         reorderThreshold[msg.sender][batchId] = threshold;
+        emit ReorderThresholdSet(batchId, msg.sender, threshold);
     }
 
     function checkExpiry(
         uint256 batchId
     ) public view override returns (bool valid) {
-        return block.timestamp < registry.getBatchDetails(batchId).expiryDate;
+        return block.timestamp < registry.getExpiry(batchId);
     }
 
     function isRecalled(
