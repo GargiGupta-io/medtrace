@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useHolderLedger } from "../hooks/useLedger.js";
-import { makeNameOf } from "../lib/ledger.js";
+import { isDisposable, makeNameOf } from "../lib/ledger.js";
 import { units } from "../lib/format.js";
 import { Button, Card, Stat } from "../components/ui.jsx";
+import { ReturnModal, WriteOffModal } from "../components/safety.jsx";
 import { DispatchModal, InTransit, IncomingConsignments, StockTable, TrailModal } from "../components/batch.jsx";
 
 // A distributor sits in the middle: accepts stock from manufacturers or other
@@ -11,6 +12,8 @@ export default function DistributorDashboard({ wallet, profile }) {
   const ledger = useHolderLedger(wallet);
   const [forwarding, setForwarding] = useState(null);
   const [tracing, setTracing] = useState(null);
+  const [returning, setReturning] = useState(null);
+  const [writingOff, setWritingOff] = useState(null);
   const nameOf = makeNameOf(ledger.participants, wallet.deployment.contracts.SupplyChain);
 
   const totals = useMemo(
@@ -41,7 +44,7 @@ export default function DistributorDashboard({ wallet, profile }) {
 
       <IncomingConsignments items={ledger.incoming} nameOf={nameOf} supply={wallet.contracts.supply} onDone={ledger.reload} />
 
-      <Card title="Your stock" subtitle="Soonest expiry first. Recalled or expired batches can't be forwarded.">
+      <Card title="Your stock" subtitle="Soonest expiry first. Recalled, on-hold or expired batches can't be forwarded: send them back to the manufacturer, or write off destroyed units.">
         {ledger.loading ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : (
@@ -53,9 +56,22 @@ export default function DistributorDashboard({ wallet, profile }) {
                 <Button size="sm" variant="secondary" onClick={() => setTracing(b)}>
                   Trail
                 </Button>
-                <Button size="sm" onClick={() => setForwarding(b)} disabled={status.frozen}>
-                  Forward
-                </Button>
+                {status.frozen ? (
+                  <>
+                    <Button size="sm" variant="secondary" onClick={() => setReturning(b)}>
+                      Send back
+                    </Button>
+                    {isDisposable(b) && (
+                      <Button size="sm" variant="secondary" onClick={() => setWritingOff(b)}>
+                        Write off
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <Button size="sm" onClick={() => setForwarding(b)}>
+                    Forward
+                  </Button>
+                )}
               </>
             )}
           />
@@ -76,6 +92,8 @@ export default function DistributorDashboard({ wallet, profile }) {
         />
       )}
       {tracing && <TrailModal batch={tracing} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setTracing(null)} />}
+      {returning && <ReturnModal batch={returning} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setReturning(null)} onDone={ledger.reload} />}
+      {writingOff && <WriteOffModal batch={writingOff} inventory={wallet.contracts.inventory} onClose={() => setWritingOff(null)} onDone={ledger.reload} />}
     </div>
   );
 }
