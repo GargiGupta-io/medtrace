@@ -52,10 +52,12 @@ interface ISupplyChain {
     // ----------------------------------------------------------------- events
 
     event CustodyInitialised(uint256 indexed batchId, address indexed manufacturer, uint256 quantity);
-    event CustodyTransferInitiated(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity);
+    event CustodyTransferInitiated(
+        uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity, string location
+    );
     event CustodyTransferAccepted(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity);
     event TransferRejected(uint256 indexed batchId, address indexed from, address indexed to, string reason);
-    event TransferCancelled(uint256 indexed batchId, address indexed from, address indexed to);
+    event TransferCancelled(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity);
     /// @dev A consignment nobody accepted within TRANSFER_TTL went back to its sender.
     event TransferLapsed(uint256 indexed batchId, address indexed from, address indexed to, uint256 quantity, address by);
     event StockReturned(
@@ -64,7 +66,15 @@ interface ISupplyChain {
 
     // ----------------------------------------------------------------- errors
 
+    event InventoryManagerSet(address inventoryManager);
+    /// @dev An admin or regulator moved a revoked holder's stranded units back to the manufacturer.
+    event StockForceReturned(
+        uint256 indexed batchId, address indexed holder, address indexed manufacturer, uint256 quantity, address by, string reason
+    );
+
     error CallerNotRegistry(address caller);
+    error NotAuthorisedToForceReturn(address caller);
+    error HolderStillActive(address holder);
     error NotAdmin(address caller);
     error NotRegistered(address account);
     error InvalidRoute(bytes32 fromRole, bytes32 toRole);
@@ -140,6 +150,16 @@ interface ISupplyChain {
     ///      Then: inventory.updateStock(batchId, msg.sender, manufacturer, quantity).
     function returnToManufacturer(uint256 batchId, uint256 quantity, string calldata reason) external;
 
+    /// @notice Recover stock stranded with a revoked participant: moves `quantity`
+    ///         of `holder`'s units straight back to the batch's manufacturer.
+    /// @dev Admin or regulator. Works while paused and for any batch status,
+    ///      since the holder can no longer act. Units in escrow are not
+    ///      "stranded": cancel, reject and expireTransfer already free them.
+    ///      Reverts in order: NotAuthorisedToForceReturn, ZeroQuantity,
+    ///      HolderStillActive (holder is active, or is this contract), SelfTransfer
+    ///      (holder is the manufacturer), InsufficientStock.
+    function forceReturn(uint256 batchId, address holder, uint256 quantity, string calldata reason) external;
+
     /// @notice Give the manufacturer custody of a newly registered batch.
     ///         Callable ONLY by the DrugRegistry contract.
     /// @dev Appends the first TransferRecord (from = address(0)) and calls
@@ -155,6 +175,14 @@ interface ISupplyChain {
     function getPendingTransfer(uint256 batchId, address to) external view returns (PendingTransfer memory);
 
     function hasPendingTransfer(uint256 batchId, address to) external view returns (bool);
+
+    /// @notice Everyone with a consignment of this batch waiting for them. With
+    ///         InventoryManager.getAffectedHolders (where in-transit units show
+    ///         only as this contract's address), this is the full list to contact
+    ///         in a recall.
+    function getPendingRecipients(uint256 batchId) external view returns (address[] memory);
+
+    function getPendingRecipientsCount(uint256 batchId) external view returns (uint256);
 
     /// @notice How long a consignment may wait for acceptance (30 days).
     function TRANSFER_TTL() external view returns (uint64);
