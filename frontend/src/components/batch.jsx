@@ -89,30 +89,79 @@ export function DispatchModal({ batch, participants, supply, self, verb = "Dispa
   );
 }
 
+const TRAIL_PAGE = 25;
+
+// The custody trail, oldest first, a page at a time so a batch that has
+// changed hands thousands of times still opens instantly. Older deployments
+// without the paged reads fall back to loading the whole trail.
 export function TrailModal({ batch, supply, nameOf, onClose }) {
   const [trail, setTrail] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState({ busy: false, error: null });
+
   useEffect(() => {
     let live = true;
-    supply.getCustodyHistory(batch.id).then((t) => live && setTrail([...t])).catch(() => live && setTrail([]));
-    return () => { live = false; };
+    (async () => {
+      try {
+        const count = await supply.getCustodyHistoryCount(batch.id);
+        const first = await supply.getCustodyHistoryPage(batch.id, 0, TRAIL_PAGE);
+        if (live) {
+          setTotal(Number(count));
+          setTrail([...first]);
+        }
+      } catch {
+        const all = await supply.getCustodyHistory(batch.id).catch(() => []);
+        if (live) {
+          setTotal(all.length);
+          setTrail([...all]);
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
   }, [batch.id, supply]);
+
+  const loadMore = async () => {
+    setMore({ busy: true, error: null });
+    try {
+      const next = await supply.getCustodyHistoryPage(batch.id, trail.length, TRAIL_PAGE);
+      setTrail((t) => [...t, ...next]);
+      setMore({ busy: false, error: null });
+    } catch (e) {
+      setMore({ busy: false, error: e?.shortMessage || e?.message });
+    }
+  };
 
   return (
     <Modal title={`Custody trail · batch #${batch.id}`} onClose={onClose}>
       {!trail ? (
         <p className="text-sm text-slate-500">Loading…</p>
       ) : (
-        <ol className="relative space-y-4 border-l border-slate-200 pl-5">
-          {trail.map((r, i) => (
-            <li key={i} className="text-sm">
-              <span className="absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full bg-teal-600" />
-              <p className="font-medium">{i === 0 ? `Manufactured by ${nameOf(r.to)}` : `${nameOf(r.from)} → ${nameOf(r.to)}`}</p>
-              <p className="text-xs text-slate-500">
-                {units(r.quantity)} units · {r.location} · {toDate(r.timestamp)}
-              </p>
-            </li>
-          ))}
-        </ol>
+        <div className="max-h-[60vh] overflow-y-auto">
+          <ol className="relative space-y-4 border-l border-slate-200 pl-5">
+            {trail.map((r, i) => (
+              <li key={i} className="text-sm">
+                <span className="absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full bg-teal-600" />
+                <p className="font-medium">{i === 0 ? `Manufactured by ${nameOf(r.to)}` : `${nameOf(r.from)} → ${nameOf(r.to)}`}</p>
+                <p className="text-xs text-slate-500">
+                  {units(r.quantity)} units · {r.location} · {toDate(r.timestamp)}
+                </p>
+              </li>
+            ))}
+          </ol>
+          {trail.length < total && (
+            <div className="mt-4 flex items-center gap-3">
+              <Button size="sm" variant="secondary" disabled={more.busy} onClick={loadMore}>
+                {more.busy ? "Loading…" : `Show ${Math.min(TRAIL_PAGE, total - trail.length)} more`}
+              </Button>
+              <span className="text-xs text-slate-500">
+                {trail.length} of {total} entries
+              </span>
+            </div>
+          )}
+          {more.error && <p className="mt-2 text-xs text-rose-700">{more.error}</p>}
+        </div>
       )}
       <p className="mt-4 text-xs text-slate-500">Every entry is a confirmed, signed transaction. None can be edited or deleted.</p>
     </Modal>
