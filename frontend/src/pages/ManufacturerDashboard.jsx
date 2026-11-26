@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useManufacturerLedger } from "../hooks/useLedger.js";
-import { batchStatus, makeNameOf } from "../lib/ledger.js";
+import { batchStatus, isDisposable, makeNameOf } from "../lib/ledger.js";
 import { useTx } from "../hooks/useTx.js";
 import { dateInputToSeconds, toDate, todayInput, units } from "../lib/format.js";
 import { Badge, Button, Card, Field, Stat, TxStatus, inputClass } from "../components/ui.jsx";
 import { DispatchModal, InTransit, RecallModal, TrailModal } from "../components/batch.jsx";
 import { QrModal } from "../components/qr.jsx";
 import CertificateField from "../components/CertificateField.jsx";
+import { HoldModal, RecallProgress, WriteOffModal } from "../components/safety.jsx";
 
 export default function ManufacturerDashboard({ wallet, profile }) {
   const ledger = useManufacturerLedger(wallet);
@@ -14,14 +15,17 @@ export default function ManufacturerDashboard({ wallet, profile }) {
   const [qrFor, setQrFor] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [tracing, setTracing] = useState(null);
+  const [holding, setHolding] = useState(null);
+  const [writingOff, setWritingOff] = useState(null);
 
   const nameOf = makeNameOf(ledger.participants, wallet.deployment.contracts.SupplyChain);
 
   const totals = useMemo(() => {
     const inStock = ledger.batches.reduce((s, b) => s + b.stock, 0n);
     const inTransit = ledger.inTransit.reduce((s, t) => s + t.quantity, 0n);
-    return { inStock, inTransit, recalled: ledger.batches.filter((b) => b.recalled).length };
+    return { inStock, inTransit };
   }, [ledger.batches, ledger.inTransit]);
+  const recalled = ledger.batches.filter((b) => b.recalled);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
@@ -35,7 +39,7 @@ export default function ManufacturerDashboard({ wallet, profile }) {
         <Stat label="Batches registered" value={ledger.batches.length} />
         <Stat label="Units in your stock" value={units(totals.inStock)} />
         <Stat label="Units in transit" value={units(totals.inTransit)} hint="Dispatched, not yet accepted" />
-        <Stat label="Recalled batches" value={totals.recalled} />
+        <Stat label="Recalled batches" value={recalled.length} />
       </div>
 
       {ledger.error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Couldn't load the ledger: {ledger.error}</p>}
@@ -46,9 +50,32 @@ export default function ManufacturerDashboard({ wallet, profile }) {
         ) : ledger.batches.length === 0 ? (
           <p className="text-sm text-slate-500">No batches yet. Register your first one below.</p>
         ) : (
-          <BatchTable batches={ledger.batches} onDispatch={setDispatching} onRecall={setRecalling} onTrace={setTracing} onQr={setQrFor} />
+          <BatchTable
+            batches={ledger.batches}
+            onDispatch={setDispatching}
+            onRecall={setRecalling}
+            onTrace={setTracing}
+            onQr={setQrFor}
+            onHold={setHolding}
+            onWriteOff={setWritingOff}
+          />
         )}
       </Card>
+
+      {recalled.length > 0 && (
+        <Card title="Recall progress" subtitle="A recall is closed once every unit is either destroyed or was dispensed before it.">
+          <ul className="divide-y divide-slate-100">
+            {recalled.map((b) => (
+              <li key={b.id} className="space-y-2 py-3 text-sm">
+                <p className="font-medium">
+                  Batch #{b.id.toString()} · {b.drugName}
+                </p>
+                <RecallProgress batchId={b.id} inventory={wallet.contracts.inventory} refreshKey={ledger.loadedAt} />
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <RegisterBatch registry={wallet.contracts.registry} onDone={ledger.reload} />
@@ -61,6 +88,8 @@ export default function ManufacturerDashboard({ wallet, profile }) {
       {recalling && <RecallModal batch={recalling} inventory={wallet.contracts.inventory} nameOf={nameOf} onClose={() => setRecalling(null)} onDone={ledger.reload} />}
       {qrFor && <QrModal batch={qrFor} onClose={() => setQrFor(null)} />}
       {tracing && <TrailModal batch={tracing} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setTracing(null)} />}
+      {holding && <HoldModal batch={holding} inventory={wallet.contracts.inventory} onClose={() => setHolding(null)} onDone={ledger.reload} />}
+      {writingOff && <WriteOffModal batch={writingOff} inventory={wallet.contracts.inventory} onClose={() => setWritingOff(null)} onDone={ledger.reload} />}
     </div>
   );
 }
@@ -118,7 +147,7 @@ function RegisterBatch({ registry, onDone }) {
   );
 }
 
-function BatchTable({ batches, onDispatch, onRecall, onTrace, onQr }) {
+function BatchTable({ batches, onDispatch, onRecall, onTrace, onQr, onHold, onWriteOff }) {
   return (
     <div className="-mx-5 -my-5 overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -148,6 +177,7 @@ function BatchTable({ batches, onDispatch, onRecall, onTrace, onQr }) {
                 <td className="px-3 py-3 whitespace-nowrap">{toDate(b.expiryDate)}</td>
                 <td className="px-3 py-3">
                   <Badge tone={status.tone}>{status.label}</Badge>
+                  {b.hold && <p className="mt-1 max-w-[16rem] text-xs text-slate-500">"{b.hold.reason}"{b.hold.byRegulator ? " · placed by a regulator" : ""}</p>}
                 </td>
                 <td className="px-5 py-3">
                   <div className="flex justify-end gap-1.5">
@@ -160,6 +190,21 @@ function BatchTable({ batches, onDispatch, onRecall, onTrace, onQr }) {
                     <Button size="sm" onClick={() => onDispatch(b)} disabled={status.frozen || b.stock === 0n}>
                       Dispatch
                     </Button>
+                    {isDisposable(b) ? (
+                      <Button size="sm" variant="secondary" onClick={() => onWriteOff(b)} disabled={b.stock === 0n}>
+                        Write off
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onHold(b)}
+                        disabled={b.hold?.byRegulator}
+                        title={b.hold?.byRegulator ? "Only a regulator can lift a regulator's hold." : undefined}
+                      >
+                        {b.quarantined ? "Lift hold" : "Hold"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="danger" onClick={() => onRecall(b)} disabled={b.recalled}>
                       Recall
                     </Button>
