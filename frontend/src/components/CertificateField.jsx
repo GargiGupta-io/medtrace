@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CERTIFICATE_TYPES, IPFS_GATEWAY, forgetKey, saveKey, savedKey, uploadCertificate } from "../lib/ipfs.js";
 import { Button, Field, inputClass } from "./ui.jsx";
+import { cidProblem } from "../lib/validate.js";
 
 // The QA certificate for a new batch. Uploading stores the file on IPFS and
 // gives back its CID, a fingerprint of the file's exact contents, which is
@@ -51,9 +52,18 @@ export default function CertificateField({ value, onChange }) {
   }
 
   if (mode === "paste") {
+    const problem = cidProblem(value);
     return (
-      <Field label="QA certificate (IPFS CID)" hint={<button type="button" className="underline" onClick={() => { setMode("upload"); onChange(""); }}>Upload a file instead</button>}>
-        <input className={inputClass} value={value} onChange={(e) => onChange(e.target.value)} placeholder="bafkrei…" required />
+      <Field
+        label="QA certificate (IPFS CID)"
+        hint={
+          <>
+            {problem && <span className="mb-1 block text-rose-700">{problem}</span>}
+            <button type="button" className="underline" onClick={() => { setMode("upload"); onChange(""); }}>Upload a file instead</button>
+          </>
+        }
+      >
+        <input className={inputClass} value={value} onChange={(e) => onChange(e.target.value.trim())} placeholder="bafkrei…" aria-invalid={Boolean(problem)} required />
       </Field>
     );
   }
