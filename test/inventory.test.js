@@ -638,4 +638,49 @@ describe("InventoryManager", function () {
       expect((await inv.getDispensingLogPage(99, 0, 10)).length).to.equal(0);
     });
   });
+
+  describe("v2: deployment checks", function () {
+    it("refuses a zero registry or supply chain address", async function () {
+      const [, other] = await ethers.getSigners();
+      const factory = await ethers.getContractFactory("InventoryManager");
+      await expect(factory.deploy(ZERO, other.address)).to.be.revertedWithCustomError(factory, "ZeroAddress");
+      await expect(factory.deploy(other.address, ZERO)).to.be.revertedWithCustomError(factory, "ZeroAddress");
+    });
+  });
+
+  describe("v2: reorder level validation", function () {
+    it("announces a new reorder level", async function () {
+      const { inv, pharm } = await loadFixture(deployFixture);
+      await expect(inv.connect(pharm).setReorderThreshold(1, 80))
+        .to.emit(inv, "ReorderThresholdSet")
+        .withArgs(1, pharm.address, 80);
+    });
+
+    it("refuses a batch that doesn't exist", async function () {
+      const { inv, pharm } = await loadFixture(deployFixture);
+      await expect(inv.connect(pharm).setReorderThreshold(99, 80))
+        .to.be.revertedWithCustomError(inv, "BatchNotFound")
+        .withArgs(99);
+      expect(await inv.getReorderThreshold(pharm.address, 99)).to.equal(0n);
+    });
+  });
+
+  describe("v2: expiry warning once per batch", function () {
+    it("warns on the first move inside the window, then stays quiet", async function () {
+      const { inv, registry, scAccount, mfg, pharm } = await loadFixture(deployFixture);
+      const expiry = (await time.latest()) + 10 * DAY;
+      await registry.setBatch(1, mfg.address, expiry);
+
+      await expect(inv.connect(scAccount).updateStock(1, mfg.address, pharm.address, 10)).to.emit(inv, "ExpiryWarning").withArgs(1, expiry);
+      await expect(inv.connect(scAccount).updateStock(1, mfg.address, pharm.address, 10)).to.not.emit(inv, "ExpiryWarning");
+      await expect(inv.connect(pharm).dispenseDrug(1, 5)).to.not.emit(inv, "ExpiryWarning");
+    });
+
+    it("moves outside the window don't use up the warning", async function () {
+      const { inv, scAccount, mfg, pharm, expiry } = await loadFixture(deployFixture);
+      await inv.connect(pharm).dispenseDrug(1, 5); // a year out: no warning
+      await time.increaseTo(expiry - 5 * DAY);
+      await expect(inv.connect(scAccount).updateStock(1, mfg.address, pharm.address, 10)).to.emit(inv, "ExpiryWarning").withArgs(1, expiry);
+    });
+  });
 });
