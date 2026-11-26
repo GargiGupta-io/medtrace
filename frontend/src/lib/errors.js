@@ -38,6 +38,8 @@ const MESSAGES = {
   NoAdminProposal: () => "There's no admin invitation for that account.",
   TransferHasLapsed: () => "This consignment waited more than 30 days and has lapsed. It can only be sent back to the sender now.",
   TransferNotLapsed: () => "This consignment hasn't reached its 30-day limit yet. The recipient can still accept or reject it, or the sender can cancel it.",
+  NotAuthorisedToForceReturn: () => "Only an admin or a regulator can recover stock from a revoked participant.",
+  HolderStillActive: () => "That holder is still active, so their stock isn't stranded. They can ship it or send it back themselves.",
   InvalidStatusTransition: () => "That status change isn't allowed. A recall is final and can't be undone.",
 };
 
