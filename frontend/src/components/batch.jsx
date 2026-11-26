@@ -4,6 +4,7 @@ import { ROLES, roleLabel } from "../lib/roles.js";
 import { shortAddr, toDate, units } from "../lib/format.js";
 import { Badge, Button, Card, Field, Modal, TxStatus, inputClass } from "./ui.jsx";
 import { batchStatus, hasLapsed, lapsesAt } from "../lib/ledger.js";
+import { isQuantity, quantityProblem } from "../lib/validate.js";
 
 // Batch pieces shared by the manufacturer, distributor and pharmacy dashboards.
 
@@ -51,7 +52,8 @@ export function DispatchModal({ batch, participants, supply, self, verb = "Dispa
 
   const submit = (e) => {
     e.preventDefault();
-    tx.run(verb, () => supply.transferCustody(batch.id, to, BigInt(quantity || 0), location.trim()));
+    if (!isQuantity(quantity, batch.stock)) return;
+    tx.run(verb, () => supply.transferCustody(batch.id, to, BigInt(quantity), location.trim()));
   };
 
   return (
@@ -66,7 +68,7 @@ export function DispatchModal({ batch, participants, supply, self, verb = "Dispa
             ))}
           </select>
         </Field>
-        <Field label="Quantity" hint={`You hold ${units(batch.stock)} units.`}>
+        <Field label="Quantity" hint={quantityProblem(quantity, batch.stock) ? <span className="text-rose-700">{quantityProblem(quantity, batch.stock)}</span> : `You hold ${units(batch.stock)} units.`}>
           <input type="number" min="1" max={batch.stock.toString()} step="1" className={inputClass} value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
         </Field>
         <Field label="Route / location">
@@ -77,7 +79,7 @@ export function DispatchModal({ batch, participants, supply, self, verb = "Dispa
           <Button type="button" variant="secondary" onClick={onClose}>
             Close
           </Button>
-          <Button type="submit" disabled={tx.busy || !to}>
+          <Button type="submit" disabled={tx.busy || !to || !isQuantity(quantity, batch.stock) || !location.trim()}>
             {tx.busy ? "Sending…" : verb}
           </Button>
         </div>
