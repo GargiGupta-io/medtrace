@@ -304,10 +304,15 @@ export function RecallModal({ batch, inventory, nameOf, onClose, onDone }) {
       {tx.state.status === "done" ? (
         <div className="space-y-3 text-sm">
           <p className="font-medium text-rose-700">Batch #{batch.id.toString()} is frozen across the network.</p>
-          <p className="text-slate-600">Nobody can transfer, accept or dispense it from block {tx.state.block}. These holders still have units and need to be contacted:</p>
+          <p className="text-slate-600">Nobody can transfer, accept or dispense it from block {tx.state.block}. Contact everyone who has units, or has units on the way:</p>
           <ul className="list-disc space-y-1 pl-5">
-            {batch.holders.map((h) => (
-              <li key={h}>{nameOf(h)}</li>
+            {batch.holders
+              .filter((h) => nameOf(h) !== "In transit")
+              .map((h) => (
+                <li key={h}>{nameOf(h)}</li>
+              ))}
+            {(batch.pendingTo ?? []).map((r) => (
+              <li key={`to-${r}`}>{nameOf(r)} (consignment on the way: they can only reject it now)</li>
             ))}
           </ul>
           <div className="flex justify-end">
