@@ -6,7 +6,7 @@ import { shortAddr, toDate, units } from "../lib/format.js";
 import { Badge, Button, Card, Modal, Stat, inputClass } from "../components/ui.jsx";
 import { RecallModal, TrailModal } from "../components/batch.jsx";
 import { PauseControl } from "../components/emergency.jsx";
-import { HoldModal, RecallProgress } from "../components/safety.jsx";
+import { ForceReturnModal, HoldModal, RecallProgress } from "../components/safety.jsx";
 
 const FILTERS = ["All", "Active", "Expiring", "Expired", "On hold", "Recalled"];
 
@@ -20,6 +20,7 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
   const [tracing, setTracing] = useState(null);
   const [holding, setHolding] = useState(null);
   const [holdFor, setHoldFor] = useState(null);
+  const [recovering, setRecovering] = useState(null);
 
   const escrow = wallet.deployment.contracts.SupplyChain;
   const nameOf = useMemo(() => makeNameOf(ledger.participants, escrow), [ledger.participants, escrow]);
@@ -39,8 +40,11 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
       });
   }, [ledger.batches, query, filter, nameOf]);
 
-  // Units of a recalled or expired batch still sitting somewhere in the chain.
-  const attention = ledger.batches.filter((b) => batchStatus(b).frozen && b.unitsOut > 0n);
+  // Units of a recalled, on-hold or expired batch still sitting somewhere in
+  // the chain, and units stranded with a revoked participant.
+  const revoked = (a) => ledger.participants[a.toLowerCase()]?.active === false;
+  const stranded = (b) => b.holdings.some((h) => h.stock > 0n && revoked(h.address));
+  const attention = ledger.batches.filter((b) => (batchStatus(b).frozen && b.unitsOut > 0n) || stranded(b));
   const active = Object.values(ledger.participants).filter((p) => p.active).length;
 
   return (
@@ -55,13 +59,13 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
         <Stat label="Batches on the network" value={ledger.batches.length} />
         <Stat label="Active participants" value={active} />
         <Stat label="Recalls issued" value={ledger.recalls.length} />
-        <Stat label="Unsafe stock still held" value={attention.length} hint="Recalled, on-hold or expired batches with units left" />
+        <Stat label="Unsafe stock still held" value={attention.length} hint="Recalled, on-hold, expired or stranded units still out there" />
       </div>
 
       {ledger.error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Couldn't load the ledger: {ledger.error}</p>}
 
       {attention.length > 0 && (
-        <Card title="Needs follow-up" subtitle="Frozen on chain, but the physical units are still out there. Holders can send them back or write them off.">
+        <Card title="Needs follow-up" subtitle="Frozen or stranded on chain, but the physical units are still out there. Holders can send them back or write them off; units with a revoked holder can be recovered.">
           <ul className="divide-y divide-slate-100">
             {attention.map((b) => (
               <li key={b.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
@@ -71,6 +75,7 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
                   </p>
                   <p className="text-xs text-slate-500">
                     {units(b.unitsOut)} units at {b.holdings.filter((h) => h.stock > 0n).map((h) => nameOf(h.address)).join(", ")}
+                    {stranded(b) && <span className="text-rose-700"> · some held by a revoked participant: open Holders to recover them</span>}
                   </p>
                   {b.recalled && <RecallProgress batchId={b.id} inventory={wallet.contracts.inventory} refreshKey={ledger.loadedAt} />}
                 </div>
@@ -195,28 +200,58 @@ export default function RegulatorDashboard({ wallet, profile, pause }) {
       {recalling && <RecallModal batch={recalling} inventory={wallet.contracts.inventory} nameOf={nameOf} onClose={() => setRecalling(null)} onDone={ledger.reload} />}
       {tracing && <TrailModal batch={tracing} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setTracing(null)} />}
       {holdFor && <HoldModal batch={holdFor} inventory={wallet.contracts.inventory} onClose={() => setHoldFor(null)} onDone={ledger.reload} />}
-      {holding && <HoldersModal batch={holding} nameOf={nameOf} onClose={() => setHolding(null)} />}
+      {holding && (
+        <HoldersModal
+          batch={holding}
+          nameOf={nameOf}
+          isRevoked={revoked}
+          onRecover={(h) => {
+            setHolding(null);
+            setRecovering({ batch: holding, holder: h.address, stock: h.stock });
+          }}
+          onClose={() => setHolding(null)}
+        />
+      )}
+      {recovering && (
+        <ForceReturnModal {...recovering} supply={wallet.contracts.supply} nameOf={nameOf} onClose={() => setRecovering(null)} onDone={ledger.reload} />
+      )}
     </div>
   );
 }
 
-// Who holds how many units of one batch right now. These are the
-// facilities to contact in a recall.
-function HoldersModal({ batch, nameOf, onClose }) {
+// Who holds how many units of one batch right now, and who has some on the
+// way. These are the facilities to contact in a recall. Units stuck with a
+// revoked participant can be recovered from here.
+function HoldersModal({ batch, nameOf, isRevoked, onRecover, onClose }) {
   const held = batch.holdings.filter((h) => h.stock > 0n);
+  const pendingTo = batch.pendingTo ?? [];
   return (
     <Modal title={`Holders · batch #${batch.id} · ${batch.drugName}`} onClose={onClose}>
       {held.length === 0 ? (
-        <p className="text-sm text-slate-500">Nobody holds any units. Everything has been dispensed.</p>
+        <p className="text-sm text-slate-500">Nobody holds any units. Everything has been dispensed or destroyed.</p>
       ) : (
         <ul className="divide-y divide-slate-100 text-sm">
           {held.map((h) => (
-            <li key={h.address} className="flex justify-between gap-3 py-2">
-              <span>{nameOf(h.address)}</span>
-              <span className="tabular-nums">{units(h.stock)} units</span>
+            <li key={h.address} className="flex items-center justify-between gap-3 py-2">
+              <span>
+                {nameOf(h.address)} {isRevoked(h.address) && <Badge tone="slate">Revoked</Badge>}
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="tabular-nums">{units(h.stock)} units</span>
+                {isRevoked(h.address) && (
+                  <Button size="sm" variant="secondary" onClick={() => onRecover(h)}>
+                    Recover
+                  </Button>
+                )}
+              </span>
             </li>
           ))}
         </ul>
+      )}
+      {pendingTo.length > 0 && (
+        <p className="mt-4 text-xs text-slate-500">
+          Consignments on the way to: {pendingTo.map((r) => nameOf(r)).join(", ")}. Their units show above as "In transit".
+        </p>
       )}
     </Modal>
   );
