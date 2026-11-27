@@ -72,6 +72,16 @@ const batchFields = (b) => ({
   quarantined: isQuarantined(b),
 });
 
+// Who each batch is on its way to. Read on its own so a deployment from before
+// getPendingRecipients existed still loads, just without this list.
+async function pendingRecipients(supply, ids) {
+  try {
+    return (await readMany(ids.map((id) => [supply, "getPendingRecipients", id]))).map((list) => [...list]);
+  } catch {
+    return ids.map(() => []);
+  }
+}
+
 // Runs `reads(id)` for every id in one batched round of reads, and hands each
 // id its results in the same order.
 async function readPerId(ids, reads) {
@@ -103,9 +113,10 @@ export function useManufacturerLedger(wallet) {
       [inventory, "isRecalled", id],
       [inventory, "getAffectedHolders", id],
     ]);
+    const pendingTo = await pendingRecipients(supply, ids);
     const batches = ids.map((id, i) => {
       const [b, stock, recalled, holders] = rows[i];
-      return { id, ...batchFields(b), stock, recalled, holders: [...holders] };
+      return { id, ...batchFields(b), stock, recalled, holders: [...holders], pendingTo: pendingTo[i] };
     });
     batches.sort((a, b) => Number(b.id - a.id));
 
@@ -177,7 +188,7 @@ export function useNetworkLedger(wallet) {
   const { contracts, deployment, provider } = wallet;
 
   const fetch = useCallback(async () => {
-    const { registry, inventory } = contracts;
+    const { registry, supply, inventory } = contracts;
     const from = deployment.deployedBlock ?? 0;
     const [participants, count, recallEvents] = await Promise.all([
       loadParticipants(registry, from),
@@ -193,7 +204,10 @@ export function useNetworkLedger(wallet) {
     ]);
     // Second round: every holder's stock of every batch, all in one go.
     const holderLists = rows.map(([, , h]) => [...h]);
-    const stocks = await readPerId(ids, (id, i) => holderLists[i].map((h) => [inventory, "getFacilityStock", h, id]));
+    const [stocks, pendingTo] = await Promise.all([
+      readPerId(ids, (id, i) => holderLists[i].map((h) => [inventory, "getFacilityStock", h, id])),
+      pendingRecipients(supply, ids),
+    ]);
 
     const batches = ids.map((id, i) => {
       const [b, recalled] = rows[i];
@@ -205,6 +219,7 @@ export function useNetworkLedger(wallet) {
         holders,
         holdings: holders.map((h, j) => ({ address: h, stock: stocks[i][j] })),
         unitsOut: stocks[i].reduce((s, v) => s + v, 0n),
+        pendingTo: pendingTo[i],
       };
     });
     batches.sort((a, b) => Number(b.id - a.id));
