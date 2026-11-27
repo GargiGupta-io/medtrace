@@ -71,10 +71,10 @@ export function HoldModal({ batch, inventory, onClose, onDone }) {
 
 // A quantity field that refuses anything the holder doesn't have, so the
 // wallet is never asked to sign a transaction that's bound to fail.
-function useQuantity(max) {
+function useQuantity(max, holds = "You hold") {
   const [value, setValue] = useState("");
   const problem = quantityProblem(value, max);
-  return { value, setValue, ok: isQuantity(value, max), hint: problem ? <span className="text-rose-700">{problem}</span> : `You hold ${units(max)} units.` };
+  return { value, setValue, ok: isQuantity(value, max), hint: problem ? <span className="text-rose-700">{problem}</span> : `${holds} ${units(max)} units.` };
 }
 
 // Sends recalled, on-hold or expired units straight back to the manufacturer.
@@ -185,5 +185,43 @@ export function RecallProgress({ batchId, inventory, refreshKey }) {
         {units(p.destroyed)} destroyed · {units(p.dispensed)} already dispensed · {units(p.produced)} made
       </p>
     </div>
+  );
+}
+
+// Recovers units stranded with a revoked participant: they can no longer move
+// them, so a regulator (or admin) sends them back to the manufacturer.
+export function ForceReturnModal({ batch, holder, stock, supply, nameOf, onClose, onDone }) {
+  const qty = useQuantity(stock, "They hold");
+  const [reason, setReason] = useState("");
+  const tx = useTx(closeSoon(onDone, onClose));
+  return (
+    <Modal title={`Recover stock · batch #${batch.id} · ${batch.drugName}`} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          tx.run("Recover stock", () => supply.forceReturn(batch.id, holder, BigInt(qty.value), reason.trim()));
+        }}
+        className="space-y-4"
+      >
+        <p className="text-sm text-slate-600">
+          {nameOf(holder)} has been revoked, so nobody can move their {units(stock)} units. This sends them back to {nameOf(batch.manufacturer)} and records it in the custody trail.
+        </p>
+        <Field label="Units to recover" hint={qty.hint}>
+          <input type="number" min="1" max={stock.toString()} step="1" className={inputClass} value={qty.value} onChange={(e) => qty.setValue(e.target.value)} required />
+        </Field>
+        <Field label="Reason">
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Licence suspended; stock recovered on inspection" required />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={() => qty.setValue(stock.toString())}>
+            All of it
+          </Button>
+          <Button type="submit" disabled={tx.busy || !qty.ok || !reason.trim()}>
+            {tx.busy ? "Recovering…" : "Recover stock"}
+          </Button>
+        </div>
+        <TxStatus state={tx.state} />
+      </form>
+    </Modal>
   );
 }
