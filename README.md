@@ -271,11 +271,21 @@ test-wallet keys are in `.env.demo-wallets.json` (gitignored); import one
 into MetaMask to use that dashboard.
 
 **Security scan.** [Slither](https://github.com/crytic/slither) on the three
-contracts reports no high or medium findings. Its four low notes are expected:
-three are expiry comparisons with `block.timestamp` (expiry is measured in
-days, so a validator shifting the clock by seconds changes nothing), and one
-is InventoryManager's constructor not checking for a zero address (only the
-deploy script calls it, with real addresses).
+contracts reported no high or medium findings. Three of its four low notes
+are expiry comparisons with `block.timestamp`, which is expected: expiry is
+measured in days, so a validator shifting the clock by seconds changes
+nothing. The fourth, InventoryManager's constructor not checking for a zero
+address, is fixed in v2.
+
+**Upgrades and redeploys.** The contracts aren't upgradeable, on purpose:
+nobody, including the admin, can swap the code under a recorded batch. The
+wiring between them is set once (`setSupplyChain`, `setInventoryManager`,
+each announced by an event), and InventoryManager's addresses are immutable
+and checked non-zero. A fix therefore means deploying all three again with
+`npm run deploy:sepolia`. The script writes a new `deployments/sepolia.json`,
+and the frontend follows it on its next build. Batches recorded on the old
+deployment stay readable there forever; they are not migrated. The addresses
+above are the v1 deployment until v2 is redeployed.
 
 ---
 
